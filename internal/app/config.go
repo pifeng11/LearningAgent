@@ -6,16 +6,30 @@ import (
 )
 
 type Config struct {
-	HTTPAddr    string
-	DatabaseURL string
-	Environment string
+	HTTPAddr                string
+	DatabaseURL             string
+	Environment             string
+	ModelProvider           string
+	DeepSeekAPIKey          string
+	DeepSeekBaseURL         string
+	DeepSeekModel           string
+	DeepSeekReasoningModel  string
+	DeepSeekReasoningEffort string
+	DeepSeekThinkingEnabled bool
 }
 
 func LoadConfig() Config {
 	return Config{
-		HTTPAddr:    envOrDefault("HTTP_ADDR", ":8080"),
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		Environment: envOrDefault("APP_ENV", "dev"),
+		HTTPAddr:                envOrDefault("HTTP_ADDR", ":8080"),
+		DatabaseURL:             os.Getenv("DATABASE_URL"),
+		Environment:             envOrDefault("APP_ENV", "dev"),
+		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
+		DeepSeekAPIKey:          os.Getenv("DEEPSEEK_API_KEY"),
+		DeepSeekBaseURL:         envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+		DeepSeekModel:           envOrDefault("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+		DeepSeekReasoningModel:  envOrDefault("DEEPSEEK_REASONING_MODEL", "deepseek-v4-pro"),
+		DeepSeekReasoningEffort: envOrDefault("DEEPSEEK_REASONING_EFFORT", "medium"),
+		DeepSeekThinkingEnabled: envBool("DEEPSEEK_THINKING_ENABLED", false),
 	}
 }
 

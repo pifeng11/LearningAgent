@@ -10,7 +10,13 @@ import (
 )
 
 func Execute() {
-	root := NewRootCommand(app.NewAgentService())
+	service, err := app.NewAgentServiceFromConfig(app.LoadConfig())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	root := NewRootCommand(service)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -20,6 +20,46 @@ go run ./cmd/learning-agent chat "我想三个月学完 Go，每天一小时"
 go run ./cmd/learning-agent server
 ```
 
+## 接入 DeepSeek V4
+
+复制配置模板并填写 API key：
+
+```bash
+cp .env.example .env
+```
+
+`.env` 不会提交到 Git。配置示例：
+
+```bash
+MODEL_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-xxx
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_REASONING_MODEL=deepseek-v4-pro
+DEEPSEEK_REASONING_EFFORT=medium
+DEEPSEEK_THINKING_ENABLED=false
+```
+
+当前 Go 程序不自动读取 `.env` 文件，运行前先导入环境变量：
+
+```bash
+set -a
+source .env
+set +a
+```
+
+然后运行真实模型对话：
+
+```bash
+go run ./cmd/learning-agent chat "请帮我制定一个 Go 并发学习计划"
+```
+
+模型选择策略：
+
+- 普通问答和练习默认使用 `deepseek-v4-flash`。
+- 学习计划和复盘默认使用 `deepseek-v4-pro`。
+- 未设置 `MODEL_PROVIDER=deepseek` 时默认使用 mock provider，方便本地测试。
+
 REST:
 
 ```bash

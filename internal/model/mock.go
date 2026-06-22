@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type MockProvider struct{}
@@ -22,4 +23,33 @@ func (p *MockProvider) Generate(ctx context.Context, req Request) (Response, err
 	default:
 		return Response{Text: fmt.Sprintf("答疑草案：我会围绕你的问题进行解释，并结合长期记忆和知识库补充上下文。问题：%s", req.Prompt)}, nil
 	}
+}
+
+func (p *MockProvider) GenerateStream(ctx context.Context, req Request) (<-chan StreamChunk, <-chan error) {
+	chunks := make(chan StreamChunk)
+	errs := make(chan error, 1)
+
+	go func() {
+		defer close(chunks)
+		defer close(errs)
+
+		resp, err := p.Generate(ctx, req)
+		if err != nil {
+			errs <- err
+			return
+		}
+
+		parts := strings.SplitAfter(resp.Text, "")
+		for _, part := range parts {
+			select {
+			case <-ctx.Done():
+				errs <- ctx.Err()
+				return
+			case chunks <- StreamChunk{Text: part}:
+			}
+		}
+		chunks <- StreamChunk{Done: true}
+	}()
+
+	return chunks, errs
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"learning-agent/internal/app"
@@ -19,16 +20,34 @@ func NewChatCommand(service *app.AgentService) *cobra.Command {
 		Short: "发送一条学习请求",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := service.Chat(context.Background(), app.ChatRequest{
+			events, errs := service.ChatStream(context.Background(), app.ChatRequest{
 				UserID:    userID,
 				SessionID: sessionID,
 				Message:   strings.Join(args, " "),
 			})
-			if err != nil {
-				return err
+
+			var intentPrinted bool
+			for event := range events {
+				switch event.Type {
+				case "agent.started":
+					fmt.Printf("Intent: %s\n\n", event.Intent)
+					intentPrinted = true
+				case "agent.delta":
+					if !intentPrinted {
+						fmt.Println()
+						intentPrinted = true
+					}
+					fmt.Print(event.Delta)
+				case "agent.completed":
+					fmt.Println()
+				case "agent.error":
+					fmt.Fprintln(os.Stderr, event.Error)
+				}
 			}
 
-			fmt.Printf("Intent: %s\n\n%s\n", resp.Intent, resp.Answer)
+			if err, ok := <-errs; ok {
+				return err
+			}
 			return nil
 		},
 	}

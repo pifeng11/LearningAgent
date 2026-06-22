@@ -16,6 +16,17 @@ type ChatResponse struct {
 	Events    []AgentEvent `json:"events,omitempty"`
 }
 
+type ChatStreamEvent struct {
+	Type      string    `json:"type"`
+	UserID    string    `json:"user_id,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
+	Intent    string    `json:"intent,omitempty"`
+	Delta     string    `json:"delta,omitempty"`
+	Answer    string    `json:"answer,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 type AgentEvent struct {
 	Type      string    `json:"type"`
 	Message   string    `json:"message"`

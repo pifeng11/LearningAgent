@@ -13,3 +13,7 @@ func NewRouter(defaultProvider Provider) *Router {
 func (r *Router) Generate(ctx context.Context, req Request) (Response, error) {
 	return r.defaultProvider.Generate(ctx, req)
 }
+
+func (r *Router) GenerateStream(ctx context.Context, req Request) (<-chan StreamChunk, <-chan error) {
+	return r.defaultProvider.GenerateStream(ctx, req)
+}

@@ -41,20 +41,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		resp, err := h.service.Chat(r.Context(), chatRequestFromMessage(message))
-		if err != nil {
-			_ = conn.WriteJSON(Event{Type: "agent.error", Data: err.Error()})
-			continue
-		}
-
-		for _, event := range resp.Events {
+		events, errs := h.service.ChatStream(r.Context(), chatRequestFromMessage(message))
+		for event := range events {
 			if err := conn.WriteJSON(Event{Type: event.Type, Data: event}); err != nil {
 				return
 			}
 		}
 
-		if err := conn.WriteJSON(Event{Type: "agent.completed", Data: resp}); err != nil {
-			return
+		if err, ok := <-errs; ok && err != nil {
+			_ = conn.WriteJSON(Event{Type: "agent.error", Data: err.Error()})
+			continue
 		}
 	}
 }
