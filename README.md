@@ -20,6 +20,14 @@ go run ./cmd/learning-agent chat "我想三个月学完 Go，每天一小时"
 go run ./cmd/learning-agent server
 ```
 
+也可以使用 Makefile：
+
+```bash
+make test
+make chat
+make dev
+```
+
 ## 接入 DeepSeek V4
 
 复制配置模板并填写 API key：
@@ -52,6 +60,13 @@ set +a
 
 ```bash
 go run ./cmd/learning-agent chat "请帮我制定一个 Go 并发学习计划"
+```
+
+使用 Makefile 时会自动加载 `.env`：
+
+```bash
+make chat
+make dev
 ```
 
 模型选择策略：
