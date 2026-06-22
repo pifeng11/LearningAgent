@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewServerCommand(service *app.AgentService) *cobra.Command {
+func NewServerCommand() *cobra.Command {
 	var addr string
 
 	cmd := &cobra.Command{
@@ -17,6 +17,10 @@ func NewServerCommand(service *app.AgentService) *cobra.Command {
 		Short: "启动 REST 和 WebSocket 服务",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := app.LoadConfig()
+			service, err := app.NewAgentServiceFromConfig(cfg)
+			if err != nil {
+				return err
+			}
 			if addr == "" {
 				addr = cfg.HTTPAddr
 			}

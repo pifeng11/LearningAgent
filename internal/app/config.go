@@ -9,6 +9,8 @@ type Config struct {
 	HTTPAddr                string
 	DatabaseURL             string
 	Environment             string
+	MemoryStore             string
+	LocalDataPath           string
 	ModelProvider           string
 	DeepSeekAPIKey          string
 	DeepSeekBaseURL         string
@@ -23,6 +25,8 @@ func LoadConfig() Config {
 		HTTPAddr:                envOrDefault("HTTP_ADDR", ":8080"),
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
 		Environment:             envOrDefault("APP_ENV", "dev"),
+		MemoryStore:             envOrDefault("MEMORY_STORE", "local"),
+		LocalDataPath:           envOrDefault("LOCAL_DATA_PATH", "data/memories.jsonl"),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
 		DeepSeekAPIKey:          os.Getenv("DEEPSEEK_API_KEY"),
 		DeepSeekBaseURL:         envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),

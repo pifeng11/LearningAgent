@@ -28,6 +28,60 @@ make chat
 make dev
 ```
 
+`make dev` 会启动同一个 Gin 服务，同时提供 REST 和 WebSocket：
+
+```text
+REST:      http://localhost:8080/api/v1/agent/chat
+WebSocket: ws://localhost:8080/ws/v1/agent
+CLI:       make chat CHAT_MESSAGE="帮我制定 Go 学习计划"
+```
+
+如果默认 `:8080` 被占用，可以指定临时端口：
+
+```bash
+make dev DEV_ADDR=:8081
+```
+
+## 本地存储和 PostgreSQL
+
+默认不需要数据库，`.env.example` 中的配置会把会话记忆写到本地文件：
+
+```bash
+MEMORY_STORE=local
+LOCAL_DATA_PATH=data/memories.jsonl
+```
+
+`data/` 已加入 `.gitignore`，不会提交到 Git。
+
+如果要使用 PostgreSQL：
+
+```bash
+cp .env.example .env
+```
+
+把 `.env` 中的存储切换为任意可访问的 PostgreSQL：
+
+```bash
+MEMORY_STORE=postgres
+DATABASE_URL=postgres://learning_agent:learning_agent@localhost:55432/learning_agent?sslmode=disable
+```
+
+然后执行迁移：
+
+```bash
+make migrate
+```
+
+如果只是本地开发，需要一个临时 PostgreSQL，可以使用 Docker helper：
+
+```bash
+make local-pg-up
+make migrate
+make local-pg-psql
+make local-pg-logs
+make local-pg-down
+```
+
 ## 接入 DeepSeek V4
 
 复制配置模板并填写 API key：

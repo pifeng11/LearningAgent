@@ -10,27 +10,26 @@ import (
 )
 
 func Execute() {
-	service, err := app.NewAgentServiceFromConfig(app.LoadConfig())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	root := NewRootCommand(service)
+	root := NewRootCommand()
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func NewRootCommand(service *app.AgentService) *cobra.Command {
+func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "learning-agent",
 		Short: "综合型学习 Agent",
 	}
 
-	root.AddCommand(NewChatCommand(service))
-	root.AddCommand(NewServerCommand(service))
+	root.AddCommand(NewChatCommand())
+	root.AddCommand(NewServerCommand())
+	root.AddCommand(NewMigrateCommand())
 
 	return root
+}
+
+func newServiceFromEnv() (*app.AgentService, error) {
+	return app.NewAgentServiceFromConfig(app.LoadConfig())
 }

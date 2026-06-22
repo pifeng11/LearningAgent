@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewChatCommand(service *app.AgentService) *cobra.Command {
+func NewChatCommand() *cobra.Command {
 	var userID string
 	var sessionID string
 
@@ -20,6 +20,11 @@ func NewChatCommand(service *app.AgentService) *cobra.Command {
 		Short: "发送一条学习请求",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := newServiceFromEnv()
+			if err != nil {
+				return err
+			}
+
 			events, errs := service.ChatStream(context.Background(), app.ChatRequest{
 				UserID:    userID,
 				SessionID: sessionID,

@@ -14,6 +14,7 @@ import (
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
 	"learning-agent/internal/skills"
+	"learning-agent/internal/storage"
 )
 
 type AgentService struct {
@@ -21,6 +22,7 @@ type AgentService struct {
 	planner          *planner.Planner
 	executor         *runtime.Executor
 	modelRouter      *model.Router
+	memoryStore      memory.Store
 }
 
 func NewAgentService() *AgentService {
@@ -33,7 +35,11 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAgentService(model.NewRouter(provider)), nil
+	memoryStore, err := newMemoryStoreFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newAgentServiceWithStore(model.NewRouter(provider), memoryStore), nil
 }
 
 func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
@@ -55,7 +61,10 @@ func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
 }
 
 func newAgentService(modelRouter *model.Router) *AgentService {
-	memoryStore := memory.NewInMemoryStore()
+	return newAgentServiceWithStore(modelRouter, memory.NewInMemoryStore())
+}
+
+func newAgentServiceWithStore(modelRouter *model.Router, memoryStore memory.Store) *AgentService {
 	registry := skills.NewRegistry()
 
 	skills.RegisterBuiltins(registry, modelRouter, memoryStore)
@@ -65,6 +74,31 @@ func newAgentService(modelRouter *model.Router) *AgentService {
 		planner:          planner.NewPlanner(),
 		executor:         runtime.NewExecutor(registry, memoryStore),
 		modelRouter:      modelRouter,
+		memoryStore:      memoryStore,
+	}
+}
+
+func newMemoryStoreFromConfig(cfg Config) (memory.Store, error) {
+	switch strings.ToLower(cfg.MemoryStore) {
+	case "", "local":
+		return memory.NewLocalFileStore(cfg.LocalDataPath), nil
+	case "memory", "inmemory", "in-memory":
+		return memory.NewInMemoryStore(), nil
+	case "postgres", "pg":
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		pool, err := storage.OpenPostgres(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return nil, err
+		}
+		if err := pool.Ping(ctx); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("ping postgres: %w", err)
+		}
+		return memory.NewPostgresStore(pool), nil
+	default:
+		return nil, fmt.Errorf("unsupported MEMORY_STORE %q", cfg.MemoryStore)
 	}
 }
 
@@ -165,6 +199,17 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		}
 
 		if err, ok := <-streamErrs; ok && err != nil {
+			errs <- err
+			return
+		}
+
+		if err := s.memoryStore.Save(ctx, memory.Entry{
+			UserID:    req.UserID,
+			SessionID: req.SessionID,
+			Scope:     memory.ScopeShortTerm,
+			Content:   fmt.Sprintf("input=%s\nintent=%s\nanswer=%s", req.Message, detectedIntent, answer.String()),
+			CreatedAt: time.Now(),
+		}); err != nil {
 			errs <- err
 			return
 		}
