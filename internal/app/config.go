@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -11,6 +12,7 @@ type Config struct {
 	Environment             string
 	MemoryStore             string
 	MemoryExtractor         string
+	MemoryExtractTimeout    time.Duration
 	LocalDataPath           string
 	LocalMessagesPath       string
 	ModelProvider           string
@@ -29,6 +31,7 @@ func LoadConfig() Config {
 		Environment:             envOrDefault("APP_ENV", "dev"),
 		MemoryStore:             envOrDefault("MEMORY_STORE", "local"),
 		MemoryExtractor:         envOrDefault("MEMORY_EXTRACTOR", "llm"),
+		MemoryExtractTimeout:    envDuration("MEMORY_EXTRACT_TIMEOUT", 30*time.Second),
 		LocalDataPath:           envOrDefault("LOCAL_DATA_PATH", "data/memories.jsonl"),
 		LocalMessagesPath:       envOrDefault("LOCAL_MESSAGES_PATH", "data/messages.jsonl"),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
@@ -54,6 +57,18 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return fallback
 	}

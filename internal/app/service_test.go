@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"learning-agent/internal/memory"
 )
@@ -70,5 +71,25 @@ func TestSelectPromptMemoriesLimitsSummaries(t *testing.T) {
 	}
 	if memories[0].Type != memory.TypeGoal {
 		t.Fatalf("expected goal to be retained")
+	}
+}
+
+func TestLoadConfigReadsMemoryExtractTimeout(t *testing.T) {
+	t.Setenv("MEMORY_EXTRACT_TIMEOUT", "45s")
+
+	cfg := LoadConfig()
+
+	if cfg.MemoryExtractTimeout != 45*time.Second {
+		t.Fatalf("expected 45s memory extract timeout, got %s", cfg.MemoryExtractTimeout)
+	}
+}
+
+func TestLoadConfigFallsBackForInvalidMemoryExtractTimeout(t *testing.T) {
+	t.Setenv("MEMORY_EXTRACT_TIMEOUT", "invalid")
+
+	cfg := LoadConfig()
+
+	if cfg.MemoryExtractTimeout != 30*time.Second {
+		t.Fatalf("expected fallback memory extract timeout, got %s", cfg.MemoryExtractTimeout)
 	}
 }

@@ -49,11 +49,13 @@ make dev DEV_ADDR=:8081
 ```bash
 MEMORY_STORE=local
 MEMORY_EXTRACTOR=llm
+MEMORY_EXTRACT_TIMEOUT=30s
 LOCAL_DATA_PATH=data/memories.jsonl
 LOCAL_MESSAGES_PATH=data/messages.jsonl
 ```
 
 `data/` 已加入 `.gitignore`，不会提交到 Git。
+`MEMORY_EXTRACT_TIMEOUT` 控制回答完成后提取记忆的最长等待时间，DeepSeek 响应慢时可以适当调大。
 
 如果要使用 PostgreSQL：
 

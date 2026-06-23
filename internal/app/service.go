@@ -29,6 +29,7 @@ type AgentService struct {
 	memoryStore       memory.Store
 	conversationStore conversation.Store
 	memoryExtractor   memory.Extractor
+	memoryExtractTTL  time.Duration
 }
 
 func NewAgentService() *AgentService {
@@ -50,7 +51,7 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor), nil
+	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout), nil
 }
 
 func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
@@ -83,10 +84,14 @@ func newMemoryExtractorFromConfig(cfg Config, modelRouter *model.Router) (memory
 }
 
 func newAgentService(modelRouter *model.Router) *AgentService {
-	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor())
+	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second)
 }
 
-func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor) *AgentService {
+func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration) *AgentService {
+	if memoryExtractTTL <= 0 {
+		memoryExtractTTL = 30 * time.Second
+	}
+
 	registry := skills.NewRegistry()
 
 	skills.RegisterBuiltins(registry, modelRouter, memoryStore)
@@ -99,6 +104,7 @@ func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Sto
 		memoryStore:       memoryStore,
 		conversationStore: conversationStore,
 		memoryExtractor:   extractor,
+		memoryExtractTTL:  memoryExtractTTL,
 	}
 }
 
@@ -279,11 +285,10 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 }
 
 func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string, input string, detectedIntent state.Intent, answer string, sourceIDs []int64) {
-	// TODO: 将 RuleExtractor 替换为 LLM MemoryExtractor，输出严格 JSON 并做 schema 校验。
-	// TODO: 增加 memory upsert/merge，避免同一 goal 或 preference 被重复写入。
+	// TODO: 提高 LLM 记忆提取稳定性：增加重试、JSON repair 和结构化校验错误统计。
 	// TODO: 支持流式输出过程中的 periodic checkpoint，降低模型生成中途崩溃时的回答丢失窗口。
 	// TODO: 引入持久化后台任务队列后，将这里改为 enqueue，避免请求 goroutine 承担 memory 后处理。
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), s.memoryExtractTTL)
 	defer cancel()
 
 	entries, err := s.memoryExtractor.Extract(ctx, memory.ExtractRequest{
