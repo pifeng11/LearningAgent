@@ -49,6 +49,7 @@ make dev DEV_ADDR=:8081
 ```bash
 MEMORY_STORE=local
 LOCAL_DATA_PATH=data/memories.jsonl
+LOCAL_MESSAGES_PATH=data/messages.jsonl
 ```
 
 `data/` 已加入 `.gitignore`，不会提交到 Git。

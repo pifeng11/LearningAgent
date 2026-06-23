@@ -11,6 +11,7 @@ type Config struct {
 	Environment             string
 	MemoryStore             string
 	LocalDataPath           string
+	LocalMessagesPath       string
 	ModelProvider           string
 	DeepSeekAPIKey          string
 	DeepSeekBaseURL         string
@@ -27,6 +28,7 @@ func LoadConfig() Config {
 		Environment:             envOrDefault("APP_ENV", "dev"),
 		MemoryStore:             envOrDefault("MEMORY_STORE", "local"),
 		LocalDataPath:           envOrDefault("LOCAL_DATA_PATH", "data/memories.jsonl"),
+		LocalMessagesPath:       envOrDefault("LOCAL_MESSAGES_PATH", "data/messages.jsonl"),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
 		DeepSeekAPIKey:          os.Getenv("DEEPSEEK_API_KEY"),
 		DeepSeekBaseURL:         envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
