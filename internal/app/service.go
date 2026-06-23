@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -203,9 +204,16 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			Timestamp: time.Now(),
 		}
 
+		memories, err := s.memoryStore.Load(ctx, req.UserID, req.SessionID)
+		if err != nil {
+			errs <- err
+			return
+		}
+		prompt := buildPromptWithMemories(req.Message, memories)
+
 		chunks, streamErrs := s.modelRouter.GenerateStream(ctx, model.Request{
 			Task:   skillTaskForIntent(detectedIntent),
-			Prompt: req.Message,
+			Prompt: prompt,
 		})
 
 		var answer strings.Builder
@@ -275,6 +283,46 @@ func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string
 	}); err != nil {
 		slog.Warn("save memory asynchronously", "error", err)
 	}
+}
+
+func buildPromptWithMemories(input string, memories []memory.Entry) string {
+	if len(memories) == 0 {
+		return input
+	}
+
+	sort.SliceStable(memories, func(i, j int) bool {
+		return memories[i].UpdatedAt.After(memories[j].UpdatedAt)
+	})
+
+	var builder strings.Builder
+	builder.WriteString("请结合以下已知记忆回答用户问题。记忆可能包含历史摘要、目标、偏好或薄弱点；如果与本次问题无关，请忽略。\n\n")
+	builder.WriteString("相关记忆：\n")
+
+	// TODO: 按 token budget、memory type 优先级和相关性筛选，不应长期简单拼接最近所有记忆。
+	// TODO: 接入向量检索后，只注入与当前问题语义相关的 memories。
+	for _, entry := range memories {
+		builder.WriteString("- [")
+		builder.WriteString(entry.Type)
+		builder.WriteString("/")
+		builder.WriteString(entry.Scope)
+		builder.WriteString("] ")
+		builder.WriteString(entry.Title)
+		builder.WriteString(": ")
+		builder.WriteString(truncateMemoryContent(entry.Content, 500))
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("\n用户当前问题：\n")
+	builder.WriteString(input)
+	return builder.String()
+}
+
+func truncateMemoryContent(content string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(content))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func sourceMessageIDs(ids ...string) []int64 {

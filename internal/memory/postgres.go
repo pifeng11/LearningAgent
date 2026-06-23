@@ -26,7 +26,8 @@ func (s *PostgresStore) Load(ctx context.Context, userID string, sessionID strin
 		  AND (valid_from IS NULL OR valid_from <= NOW())
 		  AND (valid_until IS NULL OR valid_until > NOW())
 		ORDER BY updated_at DESC, created_at DESC
-	`, userID, StatusActive, sessionID, ScopeUser)
+		LIMIT $5
+	`, userID, StatusActive, sessionID, ScopeUser, DefaultLoadLimit)
 	if err != nil {
 		return nil, err
 	}

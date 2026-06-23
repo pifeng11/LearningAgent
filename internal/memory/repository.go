@@ -9,6 +9,8 @@ import (
 const (
 	TypeSummary = "summary"
 
+	DefaultLoadLimit = 10
+
 	ScopeUser    = "user"
 	ScopeSession = "session"
 
@@ -58,6 +60,9 @@ func (s *InMemoryStore) Load(ctx context.Context, userID string, sessionID strin
 	for _, entry := range s.entries {
 		if entry.UserID == userID && entry.Status == StatusActive && (entry.SessionID == sessionID || entry.Scope == ScopeUser) {
 			result = append(result, entry)
+			if len(result) >= DefaultLoadLimit {
+				break
+			}
 		}
 	}
 	return result, nil

@@ -47,6 +47,9 @@ func (s *LocalFileStore) Load(ctx context.Context, userID string, sessionID stri
 		}
 		if entry.UserID == userID && entry.Status == StatusActive && (entry.SessionID == sessionID || entry.Scope == ScopeUser) {
 			result = append(result, entry)
+			if len(result) >= DefaultLoadLimit {
+				break
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
