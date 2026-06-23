@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -171,13 +172,14 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		}
 
 		detectedIntent := s.intentClassifier.Classify(req.Message)
-		if _, err := s.conversationStore.CreateMessage(ctx, conversation.Message{
+		userMessage, err := s.conversationStore.CreateMessage(ctx, conversation.Message{
 			UserID:    req.UserID,
 			SessionID: req.SessionID,
 			Role:      "user",
 			Content:   req.Message,
 			Status:    "completed",
-		}); err != nil {
+		})
+		if err != nil {
 			errs <- err
 			return
 		}
@@ -244,13 +246,13 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			Timestamp: time.Now(),
 		}
 
-		s.saveMemoryAfterCompletion(req.UserID, req.SessionID, req.Message, detectedIntent, answerText)
+		s.saveMemoryAfterCompletion(req.UserID, req.SessionID, req.Message, detectedIntent, answerText, sourceMessageIDs(userMessage.ID, assistantMessage.ID))
 	}()
 
 	return events, errs
 }
 
-func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string, input string, detectedIntent state.Intent, answer string) {
+func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string, input string, detectedIntent state.Intent, answer string, sourceIDs []int64) {
 	// TODO: 将完整对话原文和长期记忆拆开，后续在这里做摘要、偏好/目标提取和向量索引。
 	// TODO: 支持流式输出过程中的 periodic checkpoint，降低模型生成中途崩溃时的回答丢失窗口。
 	// TODO: 引入持久化后台任务队列后，将这里改为 enqueue，避免请求 goroutine 承担 memory 后处理。
@@ -258,14 +260,32 @@ func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string
 	defer cancel()
 
 	if err := s.memoryStore.Save(ctx, memory.Entry{
-		UserID:    userID,
-		SessionID: sessionID,
-		Scope:     memory.ScopeShortTerm,
-		Content:   fmt.Sprintf("input=%s\nintent=%s\nanswer=%s", input, detectedIntent, answer),
-		CreatedAt: time.Now(),
+		UserID:     userID,
+		SessionID:  sessionID,
+		Type:       memory.TypeSummary,
+		Title:      "Conversation turn",
+		Scope:      memory.ScopeShortTerm,
+		Status:     memory.StatusActive,
+		Confidence: 1,
+		// 当前先把本轮对话作为 session summary 保存；后续 MemoryExtractor 会改为 profile/goal/weakness 等结构化记忆。
+		Content:          fmt.Sprintf("input=%s\nintent=%s\nanswer=%s", input, detectedIntent, answer),
+		SourceMessageIDs: sourceIDs,
+		Metadata:         map[string]any{"source": "chat_stream"},
+		CreatedAt:        time.Now(),
 	}); err != nil {
 		slog.Warn("save memory asynchronously", "error", err)
 	}
+}
+
+func sourceMessageIDs(ids ...string) []int64 {
+	result := []int64{}
+	for _, id := range ids {
+		parsed, err := strconv.ParseInt(id, 10, 64)
+		if err == nil {
+			result = append(result, parsed)
+		}
+	}
+	return result
 }
 
 func skillTaskForIntent(intent state.Intent) string {

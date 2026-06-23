@@ -25,10 +25,22 @@ CREATE TABLE IF NOT EXISTS memories (
     id BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
     session_id TEXT,
-    scope TEXT NOT NULL,
+    -- memories 保存从原始 messages 提炼出的可复用记忆，不再承担完整对话日志职责。
+    type TEXT NOT NULL DEFAULT 'summary',
+    title TEXT NOT NULL DEFAULT 'Conversation turn',
     content TEXT NOT NULL,
+    -- scope 表示记忆注入范围；来源 session 和长期 user 级记忆可以分离。
+    scope TEXT NOT NULL,
+    -- status 用于软删除、过期和被新记忆取代，避免直接丢失可追溯信息。
+    status TEXT NOT NULL DEFAULT 'active',
+    confidence NUMERIC NOT NULL DEFAULT 1.0,
+    -- 记录来源消息，便于用户纠错、审计和未来重新抽取记忆。
+    source_message_ids BIGINT[] NOT NULL DEFAULT '{}',
     metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    valid_from TIMESTAMPTZ,
+    valid_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS learning_profiles (

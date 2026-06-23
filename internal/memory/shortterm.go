@@ -1,3 +1,3 @@
 package memory
 
-const ScopeShortTerm = "short_term"
+const ScopeShortTerm = ScopeSession

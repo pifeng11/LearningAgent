@@ -56,10 +56,16 @@ func (s *MemorySaveSkill) Description() string {
 func (s *MemorySaveSkill) Run(ctx context.Context, current state.AgentState) (state.AgentState, error) {
 	content := fmt.Sprintf("input=%s\nintent=%s\nanswer=%s", current.Input, current.Intent, current.Answer)
 	return current, s.memory.Save(ctx, memory.Entry{
-		UserID:    current.UserID,
-		SessionID: current.SessionID,
-		Scope:     memory.ScopeShortTerm,
+		UserID:     current.UserID,
+		SessionID:  current.SessionID,
+		Type:       memory.TypeSummary,
+		Title:      "Conversation turn",
+		Scope:      memory.ScopeShortTerm,
+		Status:     memory.StatusActive,
+		Confidence: 1,
+		// DAG 路径暂时保存一条 session summary，后续会由 MemoryExtractor 生成更细粒度长期记忆。
 		Content:   content,
+		Metadata:  map[string]any{"source": "dag_skill"},
 		CreatedAt: time.Now(),
 	})
 }

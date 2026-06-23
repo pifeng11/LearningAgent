@@ -1,3 +1,3 @@
 package memory
 
-const ScopeLongTerm = "long_term"
+const ScopeLongTerm = ScopeUser

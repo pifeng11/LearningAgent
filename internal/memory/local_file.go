@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 type LocalFileStore struct {
@@ -46,7 +45,7 @@ func (s *LocalFileStore) Load(ctx context.Context, userID string, sessionID stri
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			return nil, err
 		}
-		if entry.UserID == userID && (entry.SessionID == sessionID || entry.Scope == ScopeLongTerm) {
+		if entry.UserID == userID && entry.Status == StatusActive && (entry.SessionID == sessionID || entry.Scope == ScopeUser) {
 			result = append(result, entry)
 		}
 	}
@@ -67,9 +66,7 @@ func (s *LocalFileStore) Save(ctx context.Context, entry Entry) error {
 	default:
 	}
 
-	if entry.CreatedAt.IsZero() {
-		entry.CreatedAt = time.Now()
-	}
+	entry = NormalizeEntry(entry)
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
