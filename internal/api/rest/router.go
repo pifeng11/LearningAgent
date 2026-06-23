@@ -14,6 +14,7 @@ func NewRouter(service *app.AgentService) *gin.Engine {
 
 	router.GET("/api/v1/health", handler.Health)
 	router.POST("/api/v1/agent/chat", handler.Chat)
+	router.POST("/api/v1/agent/chat/stream", handler.ChatStream)
 
 	return router
 }

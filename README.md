@@ -138,6 +138,14 @@ curl -X POST http://localhost:8080/api/v1/agent/chat \
   -d '{"user_id":"demo","session_id":"default","message":"帮我制定 Rust 学习计划"}'
 ```
 
+REST SSE 流式接口：
+
+```bash
+curl -N -X POST http://localhost:8080/api/v1/agent/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"demo","session_id":"default","message":"帮我制定 Rust 学习计划"}'
+```
+
 WebSocket:
 
 ```text
