@@ -56,3 +56,19 @@ func TestTruncateMemoryContent(t *testing.T) {
 		t.Fatalf("expected truncated content, got %q", got)
 	}
 }
+
+func TestSelectPromptMemoriesLimitsSummaries(t *testing.T) {
+	memories := selectPromptMemories([]memory.Entry{
+		{Type: memory.TypeGoal},
+		{Type: memory.TypeSummary},
+		{Type: memory.TypeSummary},
+		{Type: memory.TypeSummary},
+	})
+
+	if len(memories) != 3 {
+		t.Fatalf("expected 3 memories, got %d", len(memories))
+	}
+	if memories[0].Type != memory.TypeGoal {
+		t.Fatalf("expected goal to be retained")
+	}
+}

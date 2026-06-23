@@ -90,3 +90,8 @@ func (s *LocalFileStore) Save(ctx context.Context, entry Entry) error {
 
 	return nil
 }
+
+func (s *LocalFileStore) Upsert(ctx context.Context, entry Entry) error {
+	// 本地 JSONL 存储采用 append-only 事件格式；upsert 通过追加最新版本表达，读取侧后续会演进为按 identity 合并。
+	return s.Save(ctx, entry)
+}

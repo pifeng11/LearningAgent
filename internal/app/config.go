@@ -10,6 +10,7 @@ type Config struct {
 	DatabaseURL             string
 	Environment             string
 	MemoryStore             string
+	MemoryExtractor         string
 	LocalDataPath           string
 	LocalMessagesPath       string
 	ModelProvider           string
@@ -27,6 +28,7 @@ func LoadConfig() Config {
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
 		Environment:             envOrDefault("APP_ENV", "dev"),
 		MemoryStore:             envOrDefault("MEMORY_STORE", "local"),
+		MemoryExtractor:         envOrDefault("MEMORY_EXTRACTOR", "llm"),
 		LocalDataPath:           envOrDefault("LOCAL_DATA_PATH", "data/memories.jsonl"),
 		LocalMessagesPath:       envOrDefault("LOCAL_MESSAGES_PATH", "data/messages.jsonl"),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),

@@ -7,7 +7,12 @@ import (
 )
 
 const (
-	TypeSummary = "summary"
+	TypeGoal       = "goal"
+	TypePreference = "preference"
+	TypeWeakness   = "weakness"
+	TypeMistake    = "mistake"
+	TypeFact       = "fact"
+	TypeSummary    = "summary"
 
 	DefaultLoadLimit = 10
 
@@ -41,6 +46,7 @@ type Entry struct {
 type Store interface {
 	Load(ctx context.Context, userID string, sessionID string) ([]Entry, error)
 	Save(ctx context.Context, entry Entry) error
+	Upsert(ctx context.Context, entry Entry) error
 }
 
 type InMemoryStore struct {
@@ -80,6 +86,28 @@ func (s *InMemoryStore) Save(ctx context.Context, entry Entry) error {
 	return nil
 }
 
+func (s *InMemoryStore) Upsert(ctx context.Context, entry Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry = NormalizeEntry(entry)
+	for i, existing := range s.entries {
+		if sameMemoryIdentity(existing, entry) {
+			entry.ID = existing.ID
+			entry.SourceMessageIDs = mergeInt64s(existing.SourceMessageIDs, entry.SourceMessageIDs)
+			entry.CreatedAt = existing.CreatedAt
+			entry.UpdatedAt = time.Now()
+			if existing.Confidence > entry.Confidence {
+				entry.Confidence = existing.Confidence
+			}
+			s.entries[i] = entry
+			return nil
+		}
+	}
+	s.entries = append(s.entries, entry)
+	return nil
+}
+
 func NormalizeEntry(entry Entry) Entry {
 	now := time.Now()
 	if entry.Type == "" {
@@ -110,4 +138,25 @@ func NormalizeEntry(entry Entry) Entry {
 		entry.UpdatedAt = entry.CreatedAt
 	}
 	return entry
+}
+
+func sameMemoryIdentity(left Entry, right Entry) bool {
+	return left.UserID == right.UserID &&
+		left.Type == right.Type &&
+		left.Title == right.Title &&
+		left.Scope == right.Scope &&
+		left.Status == StatusActive
+}
+
+func mergeInt64s(left []int64, right []int64) []int64 {
+	seen := map[int64]bool{}
+	result := []int64{}
+	for _, id := range append(left, right...) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	return result
 }

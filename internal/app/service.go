@@ -28,6 +28,7 @@ type AgentService struct {
 	modelRouter       *model.Router
 	memoryStore       memory.Store
 	conversationStore conversation.Store
+	memoryExtractor   memory.Extractor
 }
 
 func NewAgentService() *AgentService {
@@ -44,7 +45,12 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAgentServiceWithStores(model.NewRouter(provider), memoryStore, conversationStore), nil
+	modelRouter := model.NewRouter(provider)
+	extractor, err := newMemoryExtractorFromConfig(cfg, modelRouter)
+	if err != nil {
+		return nil, err
+	}
+	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor), nil
 }
 
 func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
@@ -65,11 +71,22 @@ func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
 	}
 }
 
-func newAgentService(modelRouter *model.Router) *AgentService {
-	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore())
+func newMemoryExtractorFromConfig(cfg Config, modelRouter *model.Router) (memory.Extractor, error) {
+	switch strings.ToLower(cfg.MemoryExtractor) {
+	case "", "llm":
+		return memory.NewLLMExtractor(modelRouter), nil
+	case "rule":
+		return memory.NewRuleExtractor(), nil
+	default:
+		return nil, fmt.Errorf("unsupported MEMORY_EXTRACTOR %q", cfg.MemoryExtractor)
+	}
 }
 
-func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store) *AgentService {
+func newAgentService(modelRouter *model.Router) *AgentService {
+	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor())
+}
+
+func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor) *AgentService {
 	registry := skills.NewRegistry()
 
 	skills.RegisterBuiltins(registry, modelRouter, memoryStore)
@@ -81,6 +98,7 @@ func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Sto
 		modelRouter:       modelRouter,
 		memoryStore:       memoryStore,
 		conversationStore: conversationStore,
+		memoryExtractor:   extractor,
 	}
 }
 
@@ -261,27 +279,29 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 }
 
 func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string, input string, detectedIntent state.Intent, answer string, sourceIDs []int64) {
-	// TODO: 将完整对话原文和长期记忆拆开，后续在这里做摘要、偏好/目标提取和向量索引。
+	// TODO: 将 RuleExtractor 替换为 LLM MemoryExtractor，输出严格 JSON 并做 schema 校验。
+	// TODO: 增加 memory upsert/merge，避免同一 goal 或 preference 被重复写入。
 	// TODO: 支持流式输出过程中的 periodic checkpoint，降低模型生成中途崩溃时的回答丢失窗口。
 	// TODO: 引入持久化后台任务队列后，将这里改为 enqueue，避免请求 goroutine 承担 memory 后处理。
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := s.memoryStore.Save(ctx, memory.Entry{
-		UserID:     userID,
-		SessionID:  sessionID,
-		Type:       memory.TypeSummary,
-		Title:      "Conversation turn",
-		Scope:      memory.ScopeShortTerm,
-		Status:     memory.StatusActive,
-		Confidence: 1,
-		// 当前先把本轮对话作为 session summary 保存；后续 MemoryExtractor 会改为 profile/goal/weakness 等结构化记忆。
-		Content:          fmt.Sprintf("input=%s\nintent=%s\nanswer=%s", input, detectedIntent, answer),
+	entries, err := s.memoryExtractor.Extract(ctx, memory.ExtractRequest{
+		UserID:           userID,
+		SessionID:        sessionID,
+		Input:            input,
+		Answer:           answer,
 		SourceMessageIDs: sourceIDs,
-		Metadata:         map[string]any{"source": "chat_stream"},
-		CreatedAt:        time.Now(),
-	}); err != nil {
-		slog.Warn("save memory asynchronously", "error", err)
+	})
+	if err != nil {
+		slog.Warn("extract memory", "error", err)
+		return
+	}
+
+	for _, entry := range entries {
+		if err := s.memoryStore.Upsert(ctx, entry); err != nil {
+			slog.Warn("upsert extracted memory", "error", err, "type", entry.Type, "title", entry.Title)
+		}
 	}
 }
 
@@ -291,6 +311,11 @@ func buildPromptWithMemories(input string, memories []memory.Entry) string {
 	}
 
 	sort.SliceStable(memories, func(i, j int) bool {
+		leftPriority := memoryPromptPriority(memories[i])
+		rightPriority := memoryPromptPriority(memories[j])
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
 		return memories[i].UpdatedAt.After(memories[j].UpdatedAt)
 	})
 
@@ -300,7 +325,7 @@ func buildPromptWithMemories(input string, memories []memory.Entry) string {
 
 	// TODO: 按 token budget、memory type 优先级和相关性筛选，不应长期简单拼接最近所有记忆。
 	// TODO: 接入向量检索后，只注入与当前问题语义相关的 memories。
-	for _, entry := range memories {
+	for _, entry := range selectPromptMemories(memories) {
 		builder.WriteString("- [")
 		builder.WriteString(entry.Type)
 		builder.WriteString("/")
@@ -315,6 +340,38 @@ func buildPromptWithMemories(input string, memories []memory.Entry) string {
 	builder.WriteString("\n用户当前问题：\n")
 	builder.WriteString(input)
 	return builder.String()
+}
+
+func selectPromptMemories(memories []memory.Entry) []memory.Entry {
+	selected := []memory.Entry{}
+	summaryCount := 0
+	for _, entry := range memories {
+		if entry.Type == memory.TypeSummary {
+			if summaryCount >= 2 {
+				continue
+			}
+			summaryCount++
+		}
+		selected = append(selected, entry)
+	}
+	return selected
+}
+
+func memoryPromptPriority(entry memory.Entry) int {
+	switch entry.Type {
+	case memory.TypeGoal:
+		return 0
+	case memory.TypePreference:
+		return 1
+	case memory.TypeWeakness, memory.TypeMistake:
+		return 2
+	case memory.TypeFact:
+		return 3
+	case memory.TypeSummary:
+		return 9
+	default:
+		return 5
+	}
 }
 
 func truncateMemoryContent(content string, maxRunes int) string {

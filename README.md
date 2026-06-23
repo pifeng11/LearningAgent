@@ -48,6 +48,7 @@ make dev DEV_ADDR=:8081
 
 ```bash
 MEMORY_STORE=local
+MEMORY_EXTRACTOR=llm
 LOCAL_DATA_PATH=data/memories.jsonl
 LOCAL_MESSAGES_PATH=data/messages.jsonl
 ```

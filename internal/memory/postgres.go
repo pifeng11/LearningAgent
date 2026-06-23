@@ -114,3 +114,65 @@ func (s *PostgresStore) Save(ctx context.Context, entry Entry) error {
 
 	return tx.Commit(ctx)
 }
+
+func (s *PostgresStore) Upsert(ctx context.Context, entry Entry) error {
+	entry = NormalizeEntry(entry)
+	metadata, err := json.Marshal(entry.Metadata)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO users (id)
+		VALUES ($1)
+		ON CONFLICT (id) DO NOTHING
+	`, entry.UserID); err != nil {
+		return err
+	}
+
+	if entry.SessionID != "" {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO sessions (id, user_id)
+			VALUES ($1, $2)
+			ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+		`, entry.SessionID, entry.UserID); err != nil {
+			return err
+		}
+	}
+
+	// 结构化记忆按 user/type/title/scope 合并，避免同一目标或偏好重复膨胀；来源消息保留用于审计。
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memories (
+			user_id, session_id, type, title, content, scope, status, confidence,
+			source_message_ids, metadata, valid_from, valid_until, created_at, updated_at
+		)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (user_id, type, title, scope)
+		WHERE status = 'active'
+		DO UPDATE SET
+			session_id = COALESCE(EXCLUDED.session_id, memories.session_id),
+			content = EXCLUDED.content,
+			confidence = GREATEST(memories.confidence, EXCLUDED.confidence),
+			source_message_ids = (
+				SELECT ARRAY(
+					SELECT DISTINCT id
+					FROM unnest(memories.source_message_ids || EXCLUDED.source_message_ids) AS id
+				)
+			),
+			metadata = memories.metadata || EXCLUDED.metadata,
+			valid_from = EXCLUDED.valid_from,
+			valid_until = EXCLUDED.valid_until,
+			updated_at = EXCLUDED.updated_at
+	`, entry.UserID, entry.SessionID, entry.Type, entry.Title, entry.Content, entry.Scope, entry.Status,
+		entry.Confidence, entry.SourceMessageIDs, metadata, entry.ValidFrom, entry.ValidUntil, entry.CreatedAt, entry.UpdatedAt); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
