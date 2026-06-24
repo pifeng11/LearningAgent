@@ -73,3 +73,60 @@ func (s *PostgresStore) CompleteMessage(ctx context.Context, messageID string, c
 	`, content, time.Now(), id)
 	return err
 }
+
+func (s *PostgresStore) ListMessages(ctx context.Context, query ListMessagesQuery) ([]Message, error) {
+	if query.Limit <= 0 {
+		query.Limit = 10
+	}
+
+	var beforeID int64
+	if query.BeforeID != "" {
+		parsed, err := strconv.ParseInt(query.BeforeID, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		beforeID = parsed
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, session_id, role, content, status, created_at, updated_at
+		FROM (
+			SELECT id, user_id, session_id, role, content, status, created_at, updated_at
+			FROM messages
+			WHERE user_id = $1
+			  AND session_id = $2
+			  AND ($4::BIGINT = 0 OR id < $4)
+			ORDER BY created_at DESC, id DESC
+			LIMIT $3
+		) AS recent_messages
+		ORDER BY created_at ASC, id ASC
+	`, query.UserID, query.SessionID, query.Limit, beforeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0)
+	for rows.Next() {
+		var id int64
+		var message Message
+		if err := rows.Scan(
+			&id,
+			&message.UserID,
+			&message.SessionID,
+			&message.Role,
+			&message.Content,
+			&message.Status,
+			&message.CreatedAt,
+			&message.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		message.ID = strconv.FormatInt(id, 10)
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}

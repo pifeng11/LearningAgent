@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"learning-agent/internal/app"
 	"learning-agent/internal/observability"
@@ -20,6 +21,29 @@ func NewHandler(service *app.AgentService) *Handler {
 
 func (h *Handler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (h *Handler) ListMessages(c *gin.Context) {
+	turns, err := strconv.Atoi(c.DefaultQuery("turns", "5"))
+	if err != nil {
+		appErr := observability.NewError("invalid_request", "invalid turns", "cause", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), appErr)})
+		return
+	}
+
+	resp, err := h.service.ListMessages(c.Request.Context(), app.ListMessagesRequest{
+		UserID:    c.DefaultQuery("user_id", "anonymous"),
+		SessionID: c.DefaultQuery("session_id", "default"),
+		BeforeID:  c.Query("before_id"),
+		Turns:     turns,
+	})
+	if err != nil {
+		observability.LogError(c.Request.Context(), nil, "list messages failed", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *Handler) Chat(c *gin.Context) {

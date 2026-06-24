@@ -149,6 +149,24 @@ curl -N -X POST http://localhost:8080/api/v1/agent/chat/stream \
   -d '{"user_id":"demo","session_id":"default","message":"帮我制定 Rust 学习计划"}'
 ```
 
+查询历史消息：
+
+```bash
+curl 'http://localhost:8080/api/v1/agent/messages?user_id=demo&session_id=default&turns=5'
+curl 'http://localhost:8080/api/v1/agent/messages?user_id=demo&session_id=default&turns=5&before_id=52'
+```
+
+`turns` 由前端决定，后端最多允许每次查询 50 轮；`before_id` 用于游标分页查询更早消息。
+
+前端开发：
+
+```bash
+make dev
+make web-dev
+```
+
+默认前端地址是 `http://localhost:5173`，Vite 会把 `/api` 和 `/ws` 代理到 `http://localhost:8080`。
+
 WebSocket:
 
 ```text

@@ -8,6 +8,30 @@ type ChatRequest struct {
 	Message   string `json:"message"`
 }
 
+type ListMessagesRequest struct {
+	UserID    string
+	SessionID string
+	BeforeID  string
+	Turns     int
+}
+
+type ListMessagesResponse struct {
+	Messages     []ConversationMessage `json:"messages"`
+	NextBeforeID string                `json:"next_before_id,omitempty"`
+	HasMore      bool                  `json:"has_more"`
+}
+
+type ConversationMessage struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	SessionID string    `json:"session_id"`
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type ChatResponse struct {
 	UserID    string       `json:"user_id"`
 	SessionID string       `json:"session_id"`

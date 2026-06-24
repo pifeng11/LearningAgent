@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"learning-agent/internal/conversation"
 	"learning-agent/internal/memory"
+	"learning-agent/internal/model"
 )
 
 func TestAgentServiceChatRunsLearningPlan(t *testing.T) {
@@ -71,6 +73,110 @@ func TestSelectPromptMemoriesLimitsSummaries(t *testing.T) {
 	}
 	if memories[0].Type != memory.TypeGoal {
 		t.Fatalf("expected goal to be retained")
+	}
+}
+
+func TestAgentServiceListMessages(t *testing.T) {
+	conversationStore := conversation.NewInMemoryStore()
+	service := newAgentServiceWithStores(
+		model.NewRouter(model.NewMockProvider()),
+		memory.NewInMemoryStore(),
+		conversationStore,
+		memory.NewRuleExtractor(),
+		time.Second,
+	)
+
+	_, err := conversationStore.CreateMessage(context.Background(), conversation.Message{
+		UserID:    "u1",
+		SessionID: "s1",
+		Role:      "user",
+		Content:   "hello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = conversationStore.CreateMessage(context.Background(), conversation.Message{
+		UserID:    "u1",
+		SessionID: "other",
+		Role:      "user",
+		Content:   "hidden",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := service.ListMessages(context.Background(), ListMessagesRequest{
+		UserID:    "u1",
+		SessionID: "s1",
+		Turns:     5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(resp.Messages) != 1 {
+		t.Fatalf("expected one message, got %d", len(resp.Messages))
+	}
+	if resp.Messages[0].Content != "hello" {
+		t.Fatalf("expected filtered message, got %+v", resp.Messages[0])
+	}
+}
+
+func TestAgentServiceListMessagesUsesCursorPagination(t *testing.T) {
+	conversationStore := conversation.NewInMemoryStore()
+	service := newAgentServiceWithStores(
+		model.NewRouter(model.NewMockProvider()),
+		memory.NewInMemoryStore(),
+		conversationStore,
+		memory.NewRuleExtractor(),
+		time.Second,
+	)
+
+	for _, content := range []string{"m1", "m2", "m3", "m4", "m5"} {
+		_, err := conversationStore.CreateMessage(context.Background(), conversation.Message{
+			UserID:    "u1",
+			SessionID: "s1",
+			Role:      "user",
+			Content:   content,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Nanosecond)
+	}
+
+	firstPage, err := service.ListMessages(context.Background(), ListMessagesRequest{
+		UserID:    "u1",
+		SessionID: "s1",
+		Turns:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage.Messages) != 4 {
+		t.Fatalf("expected four messages, got %d", len(firstPage.Messages))
+	}
+	if !firstPage.HasMore {
+		t.Fatal("expected more messages")
+	}
+	if firstPage.NextBeforeID == "" {
+		t.Fatal("expected next cursor")
+	}
+
+	secondPage, err := service.ListMessages(context.Background(), ListMessagesRequest{
+		UserID:    "u1",
+		SessionID: "s1",
+		Turns:     2,
+		BeforeID:  firstPage.NextBeforeID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondPage.Messages) != 1 {
+		t.Fatalf("expected one older message, got %d", len(secondPage.Messages))
+	}
+	if secondPage.Messages[0].Content != "m1" {
+		t.Fatalf("expected oldest message, got %+v", secondPage.Messages[0])
 	}
 }
 

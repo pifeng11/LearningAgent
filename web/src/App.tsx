@@ -10,8 +10,8 @@ import {
   Sparkles,
   User,
 } from "lucide-react";
-import { FormEvent, useMemo, useRef, useState } from "react";
-import { streamChat, type ChatStreamEvent } from "./lib/api";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { listMessages, streamChat, type ChatStreamEvent, type ConversationMessage } from "./lib/api";
 
 type Message = {
   id: string;
@@ -26,6 +26,7 @@ const examples = [
   "用题目检查我对 HTTP 缓存的理解",
   "复盘我今天学习数据库索引的内容",
 ];
+const defaultHistoryTurns = 5;
 
 function App() {
   const [userId, setUserId] = useState("demo");
@@ -42,6 +43,10 @@ function App() {
   const [status, setStatus] = useState<"idle" | "connecting" | "streaming" | "done" | "error">("idle");
   const [lastIntent, setLastIntent] = useState("待识别");
   const [error, setError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextBeforeId, setNextBeforeId] = useState("");
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const canSend = input.trim().length > 0 && status !== "connecting" && status !== "streaming";
@@ -59,6 +64,76 @@ function App() {
         return "待命";
     }
   }, [status]);
+
+  useEffect(() => {
+    if (status === "connecting" || status === "streaming") {
+      return;
+    }
+
+    const controller = new AbortController();
+    const normalizedUserID = userId.trim() || "anonymous";
+    const normalizedSessionID = sessionId.trim() || "default";
+
+    setHistoryLoading(true);
+    setError("");
+
+    listMessages(normalizedUserID, normalizedSessionID, defaultHistoryTurns)
+      .then((historyPage) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setMessages(historyPage.messages.length > 0 ? historyPage.messages.map(toMessage) : welcomeMessages());
+        setNextBeforeId(historyPage.next_before_id ?? "");
+        setHasMoreHistory(historyPage.has_more);
+        setLastIntent("待识别");
+      })
+      .catch((caught) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const message = caught instanceof Error ? caught.message : "加载历史失败";
+        setError(message);
+        setMessages(welcomeMessages());
+        setNextBeforeId("");
+        setHasMoreHistory(false);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setHistoryLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [userId, sessionId]);
+
+  async function loadOlderMessages() {
+    if (loadingMore || historyLoading || !hasMoreHistory || !nextBeforeId) {
+      return;
+    }
+
+    setLoadingMore(true);
+    setError("");
+    try {
+      const historyPage = await listMessages(
+        userId.trim() || "anonymous",
+        sessionId.trim() || "default",
+        defaultHistoryTurns,
+        nextBeforeId,
+      );
+      setMessages((current) => {
+        const existingIDs = new Set(current.map((message) => message.id));
+        const olderMessages = historyPage.messages.map(toMessage).filter((message) => !existingIDs.has(message.id));
+        return [...olderMessages, ...current];
+      });
+      setNextBeforeId(historyPage.next_before_id ?? "");
+      setHasMoreHistory(historyPage.has_more);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "加载更早消息失败";
+      setError(message);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -153,7 +228,7 @@ function App() {
     }
 
     if (streamEvent.type === "agent.error") {
-      const message = streamEvent.error || "服务端返回错误";
+      const message = formatStreamError(streamEvent.error);
       setError(message);
       setStatus("error");
       setMessages((current) =>
@@ -180,12 +255,7 @@ function App() {
     setError("");
     setLastIntent("待识别");
     setMessages([
-      {
-        id: "welcome",
-        role: "assistant",
-        content: "新的会话已经准备好。输入你的学习目标或问题即可开始。",
-        status: "done",
-      },
+      ...welcomeMessages("新的会话已经准备好。输入你的学习目标或问题即可开始。"),
     ]);
   }
 
@@ -238,6 +308,8 @@ function App() {
               <span className="text-stone-700">接口：SSE 流式对话</span>
               <Sparkles size={18} className="text-stone-500" />
               <span className="text-stone-700">意图：{lastIntent}</span>
+              <CheckCircle2 size={18} className="text-stone-500" />
+              <span className="text-stone-700">历史：{historyLoading ? "加载中" : "已同步"}</span>
             </div>
           </section>
 
@@ -286,6 +358,16 @@ function App() {
 
           <div className="min-h-[50vh] flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:min-h-0">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+              {hasMoreHistory ? (
+                <button
+                  type="button"
+                  onClick={loadOlderMessages}
+                  disabled={loadingMore || historyLoading}
+                  className="mx-auto inline-flex h-9 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-700 transition hover:border-emerald-700 disabled:cursor-not-allowed disabled:text-stone-400"
+                >
+                  {loadingMore ? "加载中..." : `加载更早 ${defaultHistoryTurns} 轮`}
+                </button>
+              ) : null}
               {messages.map((message) => (
                 <MessageBubble key={message.id} message={message} />
               ))}
@@ -331,6 +413,37 @@ function App() {
       </div>
     </main>
   );
+}
+
+function welcomeMessages(content = "你好，我是你的 Learning Agent。可以让我制定学习计划、生成练习、回答资料问题或帮你复盘。"): Message[] {
+  return [
+    {
+      id: "welcome",
+      role: "assistant",
+      content,
+      status: "done",
+    },
+  ];
+}
+
+function toMessage(message: ConversationMessage): Message {
+  return {
+    id: message.id,
+    role: message.role === "user" ? "user" : "assistant",
+    content: message.content,
+    status: message.status === "completed" ? "done" : message.status === "failed" ? "error" : "streaming",
+  };
+}
+
+function formatStreamError(error: ChatStreamEvent["error"]) {
+  if (!error) {
+    return "服务端返回错误";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  const suffix = error.trace_id ? `（trace_id: ${error.trace_id}）` : "";
+  return `${error.code ?? "error"}: ${error.message ?? "服务端返回错误"}${suffix}`;
 }
 
 function StatusBadge({ status, label }: { status: string; label: string }) {

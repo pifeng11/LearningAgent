@@ -178,6 +178,58 @@ func (s *AgentService) Chat(ctx context.Context, req ChatRequest) (ChatResponse,
 	}, nil
 }
 
+func (s *AgentService) ListMessages(ctx context.Context, req ListMessagesRequest) (ListMessagesResponse, error) {
+	if req.UserID == "" {
+		req.UserID = "anonymous"
+	}
+	if req.SessionID == "" {
+		req.SessionID = "default"
+	}
+	if req.Turns <= 0 {
+		req.Turns = 5
+	}
+	if req.Turns > 50 {
+		req.Turns = 50
+	}
+
+	limit := req.Turns * 2
+	messages, err := s.conversationStore.ListMessages(ctx, conversation.ListMessagesQuery{
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+		BeforeID:  req.BeforeID,
+		Limit:     limit + 1,
+	})
+	if err != nil {
+		return ListMessagesResponse{}, observability.Wrap(err, "conversation_list_failed", "list conversation messages failed", "user_id", req.UserID, "session_id", req.SessionID)
+	}
+
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[1:]
+	}
+
+	resp := ListMessagesResponse{
+		Messages: make([]ConversationMessage, 0, len(messages)),
+		HasMore:  hasMore,
+	}
+	if len(messages) > 0 {
+		resp.NextBeforeID = messages[0].ID
+	}
+	for _, message := range messages {
+		resp.Messages = append(resp.Messages, ConversationMessage{
+			ID:        message.ID,
+			UserID:    message.UserID,
+			SessionID: message.SessionID,
+			Role:      message.Role,
+			Content:   message.Content,
+			Status:    message.Status,
+			CreatedAt: message.CreatedAt,
+			UpdatedAt: message.UpdatedAt,
+		})
+	}
+	return resp, nil
+}
+
 func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan ChatStreamEvent, <-chan error) {
 	events := make(chan ChatStreamEvent)
 	errs := make(chan error, 1)

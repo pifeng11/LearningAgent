@@ -4,16 +4,57 @@ export type ChatRequest = {
   message: string;
 };
 
+export type ConversationMessage = {
+  id: string;
+  user_id: string;
+  session_id: string;
+  role: "user" | "assistant" | string;
+  content: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ChatStreamEvent = {
   type: "agent.started" | "agent.delta" | "agent.completed" | "agent.error" | string;
+  trace_id?: string;
   user_id?: string;
   session_id?: string;
   intent?: string;
   delta?: string;
   answer?: string;
-  error?: string;
+  error?: string | { code?: string; message?: string; trace_id?: string };
+  error_code?: string;
   timestamp?: string;
 };
+
+export type ListMessagesResponse = {
+  messages: ConversationMessage[];
+  next_before_id?: string;
+  has_more: boolean;
+};
+
+export async function listMessages(userId: string, sessionId: string, turns = 5, beforeId = "") {
+  const params = new URLSearchParams({
+    user_id: userId,
+    session_id: sessionId,
+    turns: String(turns),
+  });
+  if (beforeId) {
+    params.set("before_id", beforeId);
+  }
+  const response = await fetch(`/api/v1/agent/messages?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  const payload = (await response.json()) as Partial<ListMessagesResponse>;
+  return {
+    messages: payload.messages ?? [],
+    next_before_id: payload.next_before_id,
+    has_more: payload.has_more ?? false,
+  };
+}
 
 type StreamCallbacks = {
   onEvent: (event: ChatStreamEvent) => void;
@@ -31,8 +72,7 @@ export async function streamChat(request: ChatRequest, callbacks: StreamCallback
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `请求失败：${response.status}`);
+    throw new Error(await readErrorMessage(response));
   }
   if (!response.body) {
     throw new Error("浏览器不支持流式响应");
@@ -85,4 +125,22 @@ function parseSSEBlock(block: string): ChatStreamEvent | null {
       error: "无法解析服务端事件",
     };
   }
+}
+
+async function readErrorMessage(response: Response) {
+  const detail = await response.text();
+  if (!detail) {
+    return `请求失败：${response.status}`;
+  }
+
+  try {
+    const payload = JSON.parse(detail) as { error?: { code?: string; message?: string; trace_id?: string } };
+    if (payload.error?.message) {
+      const suffix = payload.error.trace_id ? `（trace_id: ${payload.error.trace_id}）` : "";
+      return `${payload.error.code ?? "error"}: ${payload.error.message}${suffix}`;
+    }
+  } catch {
+    return detail;
+  }
+  return detail;
 }
