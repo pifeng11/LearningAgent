@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"learning-agent/internal/app"
+	"learning-agent/internal/observability"
 
 	gorilla "github.com/gorilla/websocket"
 )
@@ -41,7 +42,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		events, errs := h.service.ChatStream(r.Context(), chatRequestFromMessage(message))
+		ctx := observability.WithTraceID(r.Context(), observability.NewTraceID())
+		events, errs := h.service.ChatStream(ctx, chatRequestFromMessage(message))
 		for event := range events {
 			if err := conn.WriteJSON(Event{Type: event.Type, Data: event}); err != nil {
 				return
@@ -49,7 +51,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err, ok := <-errs; ok && err != nil {
-			_ = conn.WriteJSON(Event{Type: "agent.error", Data: err.Error()})
+			observability.LogError(ctx, nil, "websocket chat stream failed", err)
+			_ = conn.WriteJSON(Event{Type: "agent.error", Data: observability.UserError(ctx, err)})
 			continue
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"learning-agent/internal/app"
+	"learning-agent/internal/observability"
 
 	"github.com/spf13/cobra"
 )
@@ -25,7 +26,8 @@ func NewChatCommand() *cobra.Command {
 				return err
 			}
 
-			events, errs := service.ChatStream(context.Background(), app.ChatRequest{
+			ctx := observability.EnsureTraceID(context.Background())
+			events, errs := service.ChatStream(ctx, app.ChatRequest{
 				UserID:    userID,
 				SessionID: sessionID,
 				Message:   strings.Join(args, " "),
@@ -51,7 +53,8 @@ func NewChatCommand() *cobra.Command {
 			}
 
 			if err, ok := <-errs; ok {
-				return err
+				observability.LogError(ctx, nil, "cli chat failed", err)
+				return fmt.Errorf("%s", observability.UserErrorText(ctx, err))
 			}
 			return nil
 		},

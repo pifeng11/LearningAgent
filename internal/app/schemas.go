@@ -18,12 +18,14 @@ type ChatResponse struct {
 
 type ChatStreamEvent struct {
 	Type      string    `json:"type"`
+	TraceID   string    `json:"trace_id,omitempty"`
 	UserID    string    `json:"user_id,omitempty"`
 	SessionID string    `json:"session_id,omitempty"`
 	Intent    string    `json:"intent,omitempty"`
 	Delta     string    `json:"delta,omitempty"`
 	Answer    string    `json:"answer,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	ErrorCode string    `json:"error_code,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

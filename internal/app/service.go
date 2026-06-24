@@ -17,6 +17,7 @@ import (
 	"learning-agent/internal/conversation"
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
+	"learning-agent/internal/observability"
 	"learning-agent/internal/skills"
 	"learning-agent/internal/storage"
 )
@@ -185,8 +186,12 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		defer close(events)
 		defer close(errs)
 
+		ctx = observability.EnsureTraceID(ctx)
+		traceID := observability.TraceID(ctx)
+		startedAt := time.Now()
+
 		if strings.TrimSpace(req.Message) == "" {
-			errs <- errors.New("message is required")
+			errs <- observability.NewError("invalid_request", "message is required")
 			return
 		}
 		if req.UserID == "" {
@@ -205,7 +210,7 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			Status:    "completed",
 		})
 		if err != nil {
-			errs <- err
+			errs <- observability.Wrap(err, "conversation_create_user_failed", "create user message failed", "user_id", req.UserID, "session_id", req.SessionID)
 			return
 		}
 
@@ -216,12 +221,22 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			Status:    "streaming",
 		})
 		if err != nil {
-			errs <- err
+			errs <- observability.Wrap(err, "conversation_create_assistant_failed", "create assistant message failed", "user_id", req.UserID, "session_id", req.SessionID)
 			return
 		}
 
+		// 对话主链路只在边界打日志：开始、模型完成、记忆提取完成/失败。
+		// 内部函数通过 AppError 补充上下文，避免多层重复打印同一个错误。
+		slog.InfoContext(ctx, "chat stream started",
+			"trace_id", traceID,
+			"user_id", req.UserID,
+			"session_id", req.SessionID,
+			"intent", detectedIntent,
+		)
+
 		events <- ChatStreamEvent{
 			Type:      "agent.started",
+			TraceID:   traceID,
 			UserID:    req.UserID,
 			SessionID: req.SessionID,
 			Intent:    string(detectedIntent),
@@ -230,9 +245,17 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 
 		memories, err := s.memoryStore.Load(ctx, req.UserID, req.SessionID)
 		if err != nil {
-			errs <- err
+			errs <- observability.Wrap(err, "memory_load_failed", "load memories failed", "user_id", req.UserID, "session_id", req.SessionID)
 			return
 		}
+		selectedMemoryCount := len(selectPromptMemories(memories))
+		slog.InfoContext(ctx, "memories loaded",
+			"trace_id", traceID,
+			"user_id", req.UserID,
+			"session_id", req.SessionID,
+			"memory_count", len(memories),
+			"selected_memory_count", selectedMemoryCount,
+		)
 		prompt := buildPromptWithMemories(req.Message, memories)
 
 		chunks, streamErrs := s.modelRouter.GenerateStream(ctx, model.Request{
@@ -246,6 +269,7 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 				answer.WriteString(chunk.Text)
 				events <- ChatStreamEvent{
 					Type:      "agent.delta",
+					TraceID:   traceID,
 					UserID:    req.UserID,
 					SessionID: req.SessionID,
 					Intent:    string(detectedIntent),
@@ -259,18 +283,29 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		}
 
 		if err, ok := <-streamErrs; ok && err != nil {
-			errs <- err
+			wrapped := observability.Wrap(err, "model_stream_failed", "model stream failed", "user_id", req.UserID, "session_id", req.SessionID, "intent", detectedIntent)
+			errs <- wrapped
 			return
 		}
 
 		answerText := answer.String()
 		if err := s.conversationStore.CompleteMessage(ctx, assistantMessage.ID, answerText); err != nil {
-			errs <- err
+			errs <- observability.Wrap(err, "conversation_complete_assistant_failed", "complete assistant message failed", "message_id", assistantMessage.ID)
 			return
 		}
 
+		slog.InfoContext(ctx, "model stream completed",
+			"trace_id", traceID,
+			"user_id", req.UserID,
+			"session_id", req.SessionID,
+			"intent", detectedIntent,
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+			"answer_chars", len([]rune(answerText)),
+		)
+
 		events <- ChatStreamEvent{
 			Type:      "agent.completed",
+			TraceID:   traceID,
 			UserID:    req.UserID,
 			SessionID: req.SessionID,
 			Intent:    string(detectedIntent),
@@ -278,18 +313,32 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			Timestamp: time.Now(),
 		}
 
-		s.saveMemoryAfterCompletion(req.UserID, req.SessionID, req.Message, detectedIntent, answerText, sourceMessageIDs(userMessage.ID, assistantMessage.ID))
+		s.saveMemoryAfterCompletion(ctx, req.UserID, req.SessionID, req.Message, detectedIntent, answerText, sourceMessageIDs(userMessage.ID, assistantMessage.ID))
 	}()
 
 	return events, errs
 }
 
-func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string, input string, detectedIntent state.Intent, answer string, sourceIDs []int64) {
+func (s *AgentService) saveMemoryAfterCompletion(parentCtx context.Context, userID string, sessionID string, input string, detectedIntent state.Intent, answer string, sourceIDs []int64) {
 	// TODO: 提高 LLM 记忆提取稳定性：增加重试、JSON repair 和结构化校验错误统计。
 	// TODO: 支持流式输出过程中的 periodic checkpoint，降低模型生成中途崩溃时的回答丢失窗口。
 	// TODO: 引入持久化后台任务队列后，将这里改为 enqueue，避免请求 goroutine 承担 memory 后处理。
+	startedAt := time.Now()
+	parentCtx = observability.EnsureTraceID(parentCtx)
+	// 记忆提取发生在用户已收到 completed 之后，保留 trace 但不再受请求取消影响。
+	parentCtx = context.WithoutCancel(parentCtx)
 	ctx, cancel := context.WithTimeout(context.Background(), s.memoryExtractTTL)
 	defer cancel()
+	ctx = observability.WithTraceID(ctx, observability.TraceID(parentCtx))
+
+	slog.InfoContext(ctx, "memory extraction started",
+		"trace_id", observability.TraceID(ctx),
+		"user_id", userID,
+		"session_id", sessionID,
+		"intent", detectedIntent,
+		"timeout_ms", s.memoryExtractTTL.Milliseconds(),
+		"source_message_ids", sourceIDs,
+	)
 
 	entries, err := s.memoryExtractor.Extract(ctx, memory.ExtractRequest{
 		UserID:           userID,
@@ -299,15 +348,30 @@ func (s *AgentService) saveMemoryAfterCompletion(userID string, sessionID string
 		SourceMessageIDs: sourceIDs,
 	})
 	if err != nil {
-		slog.Warn("extract memory", "error", err)
+		wrapped := observability.Wrap(err, "memory_extract_failed", "extract memory failed", "user_id", userID, "session_id", sessionID, "intent", detectedIntent)
+		observability.LogError(ctx, slog.Default(), "memory extraction failed", wrapped, "duration_ms", time.Since(startedAt).Milliseconds())
 		return
 	}
 
+	upserted := 0
 	for _, entry := range entries {
 		if err := s.memoryStore.Upsert(ctx, entry); err != nil {
-			slog.Warn("upsert extracted memory", "error", err, "type", entry.Type, "title", entry.Title)
+			wrapped := observability.Wrap(err, "memory_upsert_failed", "upsert extracted memory failed", "type", entry.Type, "title", entry.Title)
+			observability.LogError(ctx, slog.Default(), "memory upsert failed", wrapped)
+			continue
 		}
+		upserted++
 	}
+
+	slog.InfoContext(ctx, "memory extraction completed",
+		"trace_id", observability.TraceID(ctx),
+		"user_id", userID,
+		"session_id", sessionID,
+		"intent", detectedIntent,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+		"extracted_count", len(entries),
+		"upserted_count", upserted,
+	)
 }
 
 func buildPromptWithMemories(input string, memories []memory.Entry) string {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"learning-agent/internal/app"
+	"learning-agent/internal/observability"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,13 +25,16 @@ func (h *Handler) Health(c *gin.Context) {
 func (h *Handler) Chat(c *gin.Context) {
 	var req app.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		appErr := observability.NewError("invalid_request", "invalid chat request", "cause", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), appErr)})
 		return
 	}
 
 	resp, err := h.service.Chat(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		wrapped := observability.Wrap(err, "chat_failed", "chat failed")
+		observability.LogError(c.Request.Context(), nil, "chat failed", wrapped)
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), wrapped)})
 		return
 	}
 
@@ -40,7 +44,8 @@ func (h *Handler) Chat(c *gin.Context) {
 func (h *Handler) ChatStream(c *gin.Context) {
 	var req app.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		appErr := observability.NewError("invalid_request", "invalid chat request", "cause", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), appErr)})
 		return
 	}
 
@@ -56,7 +61,8 @@ func (h *Handler) ChatStream(c *gin.Context) {
 	}
 
 	if err, ok := <-errs; ok && err != nil {
-		writeSSE(c, "agent.error", gin.H{"error": err.Error()})
+		observability.LogError(c.Request.Context(), nil, "chat stream failed", err)
+		writeSSE(c, "agent.error", gin.H{"error": observability.UserError(c.Request.Context(), err)})
 		c.Writer.Flush()
 	}
 }

@@ -2,6 +2,7 @@ package rest
 
 import (
 	"learning-agent/internal/app"
+	"learning-agent/internal/observability"
 
 	"github.com/gin-gonic/gin"
 )
@@ -9,6 +10,7 @@ import (
 func NewRouter(service *app.AgentService) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(traceMiddleware())
 
 	handler := NewHandler(service)
 
@@ -17,4 +19,13 @@ func NewRouter(service *app.AgentService) *gin.Engine {
 	router.POST("/api/v1/agent/chat/stream", handler.ChatStream)
 
 	return router
+}
+
+func traceMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := observability.EnsureTraceID(c.Request.Context())
+		c.Request = c.Request.WithContext(ctx)
+		c.Header("X-Trace-ID", observability.TraceID(ctx))
+		c.Next()
+	}
 }
