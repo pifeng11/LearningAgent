@@ -11,7 +11,7 @@ PG_DB ?= learning_agent
 
 .DEFAULT_GOAL := help
 
-.PHONY: help tidy fmt test dev chat migrate local-pg-up local-pg-down local-pg-logs local-pg-psql
+.PHONY: help tidy fmt test dev web-dev web-build chat migrate local-pg-up local-pg-down local-pg-logs local-pg-psql
 
 help:
 	@echo "Learning Agent local commands:"
@@ -19,6 +19,8 @@ help:
 	@echo "  make fmt    - Format Go code"
 	@echo "  make test   - Run all Go tests"
 	@echo "  make dev    - Start REST and WebSocket server with .env"
+	@echo "  make web-dev - Start Vite frontend dev server"
+	@echo "  make web-build - Build Vite frontend"
 	@echo "  make chat   - Run one CLI chat request with .env"
 	@echo "  make migrate - Apply migrations to DATABASE_URL"
 	@echo "  make local-pg-up   - Start local PostgreSQL helper"
@@ -41,6 +43,12 @@ dev:
 	else \
 		$(GO) run ./cmd/learning-agent server $(if $(DEV_ADDR),--addr $(DEV_ADDR),); \
 	fi
+
+web-dev:
+	cd web && npm run dev
+
+web-build:
+	cd web && npm run build
 
 chat:
 	@if [ -f .env ]; then \

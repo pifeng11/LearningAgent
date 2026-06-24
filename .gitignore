@@ -3,3 +3,5 @@ AGENTS.md
 .env.*
 !.env.example
 data/
+web/dist/
+web/node_modules/
