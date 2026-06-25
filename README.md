@@ -57,6 +57,22 @@ LOCAL_MESSAGES_PATH=data/messages.jsonl
 `data/` 已加入 `.gitignore`，不会提交到 Git。
 `MEMORY_EXTRACT_TIMEOUT` 控制回答完成后提取记忆的最长等待时间，DeepSeek 响应慢时可以适当调大。
 
+## Prompt 上下文配置
+
+对话请求会由 Prompt Builder 统一组装 system prompt、长期记忆、最近对话历史和当前输入：
+
+```bash
+PROMPT_MAX_HISTORY_TURNS=5
+PROMPT_MAX_MEMORIES=8
+PROMPT_MAX_CHARS=12000
+PROMPT_SYSTEM_FILE=prompts/system.zh.md
+```
+
+- `PROMPT_MAX_HISTORY_TURNS` 控制注入最近多少轮对话。
+- `PROMPT_MAX_MEMORIES` 控制最多注入多少条长期记忆。
+- `PROMPT_MAX_CHARS` 是当前字符预算，后续会替换为模型 token budget。
+- `PROMPT_SYSTEM_FILE` 为空时使用代码内置默认 system prompt；配置文件路径时会读取文件内容。
+
 如果要使用 PostgreSQL：
 
 ```bash

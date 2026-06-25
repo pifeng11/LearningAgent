@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +18,7 @@ import (
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
 	"learning-agent/internal/observability"
+	promptbuilder "learning-agent/internal/prompt"
 	"learning-agent/internal/skills"
 	"learning-agent/internal/storage"
 )
@@ -31,6 +32,7 @@ type AgentService struct {
 	conversationStore conversation.Store
 	memoryExtractor   memory.Extractor
 	memoryExtractTTL  time.Duration
+	promptBuilder     *promptbuilder.Builder
 }
 
 func NewAgentService() *AgentService {
@@ -52,7 +54,11 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout), nil
+	promptBuilder, err := newPromptBuilderFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout, promptBuilder), nil
 }
 
 func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
@@ -85,12 +91,15 @@ func newMemoryExtractorFromConfig(cfg Config, modelRouter *model.Router) (memory
 }
 
 func newAgentService(modelRouter *model.Router) *AgentService {
-	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second)
+	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second, defaultPromptBuilder())
 }
 
-func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration) *AgentService {
+func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration, promptBuilder *promptbuilder.Builder) *AgentService {
 	if memoryExtractTTL <= 0 {
 		memoryExtractTTL = 30 * time.Second
+	}
+	if promptBuilder == nil {
+		promptBuilder = defaultPromptBuilder()
 	}
 
 	registry := skills.NewRegistry()
@@ -106,7 +115,30 @@ func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Sto
 		conversationStore: conversationStore,
 		memoryExtractor:   extractor,
 		memoryExtractTTL:  memoryExtractTTL,
+		promptBuilder:     promptBuilder,
 	}
+}
+
+func newPromptBuilderFromConfig(cfg Config) (*promptbuilder.Builder, error) {
+	systemPrompt := ""
+	if cfg.PromptSystemFile != "" {
+		content, err := os.ReadFile(cfg.PromptSystemFile)
+		if err != nil {
+			return nil, fmt.Errorf("read PROMPT_SYSTEM_FILE: %w", err)
+		}
+		systemPrompt = string(content)
+	}
+
+	return promptbuilder.NewBuilder(promptbuilder.Config{
+		SystemPrompt:    systemPrompt,
+		MaxHistoryTurns: cfg.PromptMaxHistoryTurns,
+		MaxMemories:     cfg.PromptMaxMemories,
+		MaxPromptChars:  cfg.PromptMaxChars,
+	}), nil
+}
+
+func defaultPromptBuilder() *promptbuilder.Builder {
+	return promptbuilder.NewBuilder(promptbuilder.Config{})
 }
 
 func newStoresFromConfig(cfg Config) (memory.Store, conversation.Store, error) {
@@ -300,19 +332,37 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			errs <- observability.Wrap(err, "memory_load_failed", "load memories failed", "user_id", req.UserID, "session_id", req.SessionID)
 			return
 		}
-		selectedMemoryCount := len(selectPromptMemories(memories))
-		slog.InfoContext(ctx, "memories loaded",
+
+		history, err := s.conversationStore.ListMessages(ctx, conversation.ListMessagesQuery{
+			UserID:    req.UserID,
+			SessionID: req.SessionID,
+			Limit:     s.promptBuilder.MaxHistoryMessages() + 2,
+		})
+		if err != nil {
+			errs <- observability.Wrap(err, "conversation_history_load_failed", "load conversation history failed", "user_id", req.UserID, "session_id", req.SessionID)
+			return
+		}
+
+		promptResult := s.promptBuilder.Build(promptbuilder.BuildRequest{
+			UserInput: req.Message,
+			Memories:  memories,
+			History:   filterPromptHistory(history, userMessage.ID, assistantMessage.ID),
+		})
+		slog.InfoContext(ctx, "prompt context built",
 			"trace_id", traceID,
 			"user_id", req.UserID,
 			"session_id", req.SessionID,
+			"intent", detectedIntent,
 			"memory_count", len(memories),
-			"selected_memory_count", selectedMemoryCount,
+			"used_memory_count", promptResult.MemoryCount,
+			"history_message_count", len(history),
+			"used_history_count", promptResult.HistoryMessageCount,
+			"prompt_chars", promptResult.PromptChars,
 		)
-		prompt := buildPromptWithMemories(req.Message, memories)
 
 		chunks, streamErrs := s.modelRouter.GenerateStream(ctx, model.Request{
 			Task:   skillTaskForIntent(detectedIntent),
-			Prompt: prompt,
+			Prompt: promptResult.Prompt,
 		})
 
 		var answer strings.Builder
@@ -426,83 +476,6 @@ func (s *AgentService) saveMemoryAfterCompletion(parentCtx context.Context, user
 	)
 }
 
-func buildPromptWithMemories(input string, memories []memory.Entry) string {
-	if len(memories) == 0 {
-		return input
-	}
-
-	sort.SliceStable(memories, func(i, j int) bool {
-		leftPriority := memoryPromptPriority(memories[i])
-		rightPriority := memoryPromptPriority(memories[j])
-		if leftPriority != rightPriority {
-			return leftPriority < rightPriority
-		}
-		return memories[i].UpdatedAt.After(memories[j].UpdatedAt)
-	})
-
-	var builder strings.Builder
-	builder.WriteString("请结合以下已知记忆回答用户问题。记忆可能包含历史摘要、目标、偏好或薄弱点；如果与本次问题无关，请忽略。\n\n")
-	builder.WriteString("相关记忆：\n")
-
-	// TODO: 按 token budget、memory type 优先级和相关性筛选，不应长期简单拼接最近所有记忆。
-	// TODO: 接入向量检索后，只注入与当前问题语义相关的 memories。
-	for _, entry := range selectPromptMemories(memories) {
-		builder.WriteString("- [")
-		builder.WriteString(entry.Type)
-		builder.WriteString("/")
-		builder.WriteString(entry.Scope)
-		builder.WriteString("] ")
-		builder.WriteString(entry.Title)
-		builder.WriteString(": ")
-		builder.WriteString(truncateMemoryContent(entry.Content, 500))
-		builder.WriteString("\n")
-	}
-
-	builder.WriteString("\n用户当前问题：\n")
-	builder.WriteString(input)
-	return builder.String()
-}
-
-func selectPromptMemories(memories []memory.Entry) []memory.Entry {
-	selected := []memory.Entry{}
-	summaryCount := 0
-	for _, entry := range memories {
-		if entry.Type == memory.TypeSummary {
-			if summaryCount >= 2 {
-				continue
-			}
-			summaryCount++
-		}
-		selected = append(selected, entry)
-	}
-	return selected
-}
-
-func memoryPromptPriority(entry memory.Entry) int {
-	switch entry.Type {
-	case memory.TypeGoal:
-		return 0
-	case memory.TypePreference:
-		return 1
-	case memory.TypeWeakness, memory.TypeMistake:
-		return 2
-	case memory.TypeFact:
-		return 3
-	case memory.TypeSummary:
-		return 9
-	default:
-		return 5
-	}
-}
-
-func truncateMemoryContent(content string, maxRunes int) string {
-	runes := []rune(strings.TrimSpace(content))
-	if len(runes) <= maxRunes {
-		return string(runes)
-	}
-	return string(runes[:maxRunes]) + "..."
-}
-
 func sourceMessageIDs(ids ...string) []int64 {
 	result := []int64{}
 	for _, id := range ids {
@@ -510,6 +483,27 @@ func sourceMessageIDs(ids ...string) []int64 {
 		if err == nil {
 			result = append(result, parsed)
 		}
+	}
+	return result
+}
+
+func filterPromptHistory(history []conversation.Message, excludedIDs ...string) []conversation.Message {
+	excluded := map[string]struct{}{}
+	for _, id := range excludedIDs {
+		if id != "" {
+			excluded[id] = struct{}{}
+		}
+	}
+
+	result := make([]conversation.Message, 0, len(history))
+	for _, message := range history {
+		if _, ok := excluded[message.ID]; ok {
+			continue
+		}
+		if strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		result = append(result, message)
 	}
 	return result
 }

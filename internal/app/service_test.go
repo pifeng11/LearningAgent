@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"learning-agent/internal/conversation"
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
+	promptbuilder "learning-agent/internal/prompt"
 )
 
 func TestAgentServiceChatRunsLearningPlan(t *testing.T) {
@@ -34,48 +37,6 @@ func TestAgentServiceChatRunsLearningPlan(t *testing.T) {
 	}
 }
 
-func TestBuildPromptWithMemoriesIncludesContext(t *testing.T) {
-	prompt := buildPromptWithMemories("我想学什么？", []memory.Entry{
-		{
-			Type:    memory.TypeSummary,
-			Title:   "Conversation turn",
-			Scope:   memory.ScopeSession,
-			Content: "用户之前说想学习 Go 语言。",
-		},
-	})
-
-	if !strings.Contains(prompt, "用户之前说想学习 Go 语言") {
-		t.Fatalf("expected prompt to include memory, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "我想学什么？") {
-		t.Fatalf("expected prompt to include input, got %q", prompt)
-	}
-}
-
-func TestTruncateMemoryContent(t *testing.T) {
-	got := truncateMemoryContent("一二三四五", 3)
-
-	if got != "一二三..." {
-		t.Fatalf("expected truncated content, got %q", got)
-	}
-}
-
-func TestSelectPromptMemoriesLimitsSummaries(t *testing.T) {
-	memories := selectPromptMemories([]memory.Entry{
-		{Type: memory.TypeGoal},
-		{Type: memory.TypeSummary},
-		{Type: memory.TypeSummary},
-		{Type: memory.TypeSummary},
-	})
-
-	if len(memories) != 3 {
-		t.Fatalf("expected 3 memories, got %d", len(memories))
-	}
-	if memories[0].Type != memory.TypeGoal {
-		t.Fatalf("expected goal to be retained")
-	}
-}
-
 func TestAgentServiceListMessages(t *testing.T) {
 	conversationStore := conversation.NewInMemoryStore()
 	service := newAgentServiceWithStores(
@@ -84,6 +45,7 @@ func TestAgentServiceListMessages(t *testing.T) {
 		conversationStore,
 		memory.NewRuleExtractor(),
 		time.Second,
+		promptbuilder.NewBuilder(promptbuilder.Config{}),
 	)
 
 	_, err := conversationStore.CreateMessage(context.Background(), conversation.Message{
@@ -130,19 +92,21 @@ func TestAgentServiceListMessagesUsesCursorPagination(t *testing.T) {
 		conversationStore,
 		memory.NewRuleExtractor(),
 		time.Second,
+		promptbuilder.NewBuilder(promptbuilder.Config{}),
 	)
 
-	for _, content := range []string{"m1", "m2", "m3", "m4", "m5"} {
+	for index, content := range []string{"m1", "m2", "m3", "m4", "m5"} {
 		_, err := conversationStore.CreateMessage(context.Background(), conversation.Message{
+			ID:        string(rune('1' + index)),
 			UserID:    "u1",
 			SessionID: "s1",
 			Role:      "user",
 			Content:   content,
+			CreatedAt: time.Unix(int64(index+1), 0),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(time.Nanosecond)
 	}
 
 	firstPage, err := service.ListMessages(context.Background(), ListMessagesRequest{
@@ -197,5 +161,49 @@ func TestLoadConfigFallsBackForInvalidMemoryExtractTimeout(t *testing.T) {
 
 	if cfg.MemoryExtractTimeout != 30*time.Second {
 		t.Fatalf("expected fallback memory extract timeout, got %s", cfg.MemoryExtractTimeout)
+	}
+}
+
+func TestLoadConfigReadsPromptSettings(t *testing.T) {
+	t.Setenv("PROMPT_MAX_HISTORY_TURNS", "7")
+	t.Setenv("PROMPT_MAX_MEMORIES", "9")
+	t.Setenv("PROMPT_MAX_CHARS", "16000")
+	t.Setenv("PROMPT_SYSTEM_FILE", "prompts/system.zh.md")
+
+	cfg := LoadConfig()
+
+	if cfg.PromptMaxHistoryTurns != 7 {
+		t.Fatalf("expected prompt history turns, got %d", cfg.PromptMaxHistoryTurns)
+	}
+	if cfg.PromptMaxMemories != 9 {
+		t.Fatalf("expected prompt max memories, got %d", cfg.PromptMaxMemories)
+	}
+	if cfg.PromptMaxChars != 16000 {
+		t.Fatalf("expected prompt max chars, got %d", cfg.PromptMaxChars)
+	}
+	if cfg.PromptSystemFile != "prompts/system.zh.md" {
+		t.Fatalf("expected prompt system file, got %s", cfg.PromptSystemFile)
+	}
+}
+
+func TestNewPromptBuilderFromConfigReadsSystemPromptFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(path, []byte("自定义系统提示"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	builder, err := newPromptBuilderFromConfig(Config{
+		PromptSystemFile:      path,
+		PromptMaxHistoryTurns: 1,
+		PromptMaxMemories:     1,
+		PromptMaxChars:        1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := builder.Build(promptbuilder.BuildRequest{UserInput: "你好"})
+	if !strings.Contains(result.Prompt, "自定义系统提示") {
+		t.Fatalf("expected custom system prompt, got %q", result.Prompt)
 	}
 }

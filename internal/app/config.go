@@ -15,6 +15,10 @@ type Config struct {
 	MemoryExtractTimeout    time.Duration
 	LocalDataPath           string
 	LocalMessagesPath       string
+	PromptMaxHistoryTurns   int
+	PromptMaxMemories       int
+	PromptMaxChars          int
+	PromptSystemFile        string
 	ModelProvider           string
 	DeepSeekAPIKey          string
 	DeepSeekBaseURL         string
@@ -34,6 +38,10 @@ func LoadConfig() Config {
 		MemoryExtractTimeout:    envDuration("MEMORY_EXTRACT_TIMEOUT", 30*time.Second),
 		LocalDataPath:           envOrDefault("LOCAL_DATA_PATH", "data/memories.jsonl"),
 		LocalMessagesPath:       envOrDefault("LOCAL_MESSAGES_PATH", "data/messages.jsonl"),
+		PromptMaxHistoryTurns:   envInt("PROMPT_MAX_HISTORY_TURNS", 5),
+		PromptMaxMemories:       envInt("PROMPT_MAX_MEMORIES", 8),
+		PromptMaxChars:          envInt("PROMPT_MAX_CHARS", 12000),
+		PromptSystemFile:        os.Getenv("PROMPT_SYSTEM_FILE"),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
 		DeepSeekAPIKey:          os.Getenv("DEEPSEEK_API_KEY"),
 		DeepSeekBaseURL:         envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -57,6 +65,18 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fallback
 	}
