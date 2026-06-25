@@ -18,6 +18,7 @@ import (
 	"learning-agent/internal/debugtrace"
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
+	"learning-agent/internal/model/deepseek"
 	"learning-agent/internal/observability"
 	promptbuilder "learning-agent/internal/prompt"
 	"learning-agent/internal/skills"
@@ -73,7 +74,7 @@ func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
 	case "", "mock":
 		return model.NewMockProvider(), nil
 	case "deepseek":
-		return model.NewDeepSeekProvider(model.DeepSeekConfig{
+		return deepseek.NewProvider(deepseek.Config{
 			APIKey:          cfg.DeepSeekAPIKey,
 			BaseURL:         cfg.DeepSeekBaseURL,
 			Model:           cfg.DeepSeekModel,

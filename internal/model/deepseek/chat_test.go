@@ -1,4 +1,4 @@
-package model
+package deepseek
 
 import (
 	"bytes"
@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"learning-agent/internal/model"
 )
 
-func TestDeepSeekProviderUsesDefaultModelForQA(t *testing.T) {
-	var got deepSeekChatRequest
+func TestProviderUsesDefaultModelForQA(t *testing.T) {
+	var got chatRequest
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		assertDeepSeekRequest(t, r)
+		assertRequest(t, r)
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Fatalf("unexpected authorization header")
 		}
@@ -23,7 +25,7 @@ func TestDeepSeekProviderUsesDefaultModelForQA(t *testing.T) {
 		return jsonResponse(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`), nil
 	})}
 
-	provider, err := NewDeepSeekProvider(DeepSeekConfig{
+	provider, err := NewProvider(Config{
 		APIKey:     "test-key",
 		BaseURL:    "https://example.test",
 		HTTPClient: client,
@@ -32,7 +34,7 @@ func TestDeepSeekProviderUsesDefaultModelForQA(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := provider.Generate(context.Background(), Request{Task: "qa", Prompt: "hello"})
+	resp, err := provider.Chat(context.Background(), model.Request{Task: model.TaskQA, Prompt: "hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,14 +50,14 @@ func TestDeepSeekProviderUsesDefaultModelForQA(t *testing.T) {
 	}
 }
 
-func TestDeepSeekProviderStreamsDeltas(t *testing.T) {
-	var got deepSeekChatRequest
+func TestProviderStreamsDeltas(t *testing.T) {
+	var got chatRequest
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		assertDeepSeekRequest(t, r)
+		assertRequest(t, r)
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatal(err)
 		}
-		return streamResponse(strings.Join([]string{
+		return sseResponse(strings.Join([]string{
 			`data: {"choices":[{"delta":{"content":"你"}}]}`,
 			`data: {"choices":[{"delta":{"content":"好"}}]}`,
 			`data: [DONE]`,
@@ -63,7 +65,7 @@ func TestDeepSeekProviderStreamsDeltas(t *testing.T) {
 		}, "\n")), nil
 	})}
 
-	provider, err := NewDeepSeekProvider(DeepSeekConfig{
+	provider, err := NewProvider(Config{
 		APIKey:     "test-key",
 		BaseURL:    "https://example.test",
 		HTTPClient: client,
@@ -72,7 +74,7 @@ func TestDeepSeekProviderStreamsDeltas(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chunks, errs := provider.GenerateStream(context.Background(), Request{Task: "qa", Prompt: "hello"})
+	chunks, errs := provider.ChatStream(context.Background(), model.Request{Task: model.TaskQA, Prompt: "hello"})
 
 	var text string
 	for chunk := range chunks {
@@ -90,17 +92,17 @@ func TestDeepSeekProviderStreamsDeltas(t *testing.T) {
 	}
 }
 
-func TestDeepSeekProviderUsesReasoningModelForLearningPlan(t *testing.T) {
-	var got deepSeekChatRequest
+func TestProviderUsesReasoningModelForLearningPlan(t *testing.T) {
+	var got chatRequest
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		assertDeepSeekRequest(t, r)
+		assertRequest(t, r)
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatal(err)
 		}
 		return jsonResponse(`{"choices":[{"message":{"role":"assistant","content":"plan"}}]}`), nil
 	})}
 
-	provider, err := NewDeepSeekProvider(DeepSeekConfig{
+	provider, err := NewProvider(Config{
 		APIKey:          "test-key",
 		BaseURL:         "https://example.test",
 		ReasoningEffort: "high",
@@ -111,7 +113,7 @@ func TestDeepSeekProviderUsesReasoningModelForLearningPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := provider.Generate(context.Background(), Request{Task: "learning_plan", Prompt: "make plan"})
+	resp, err := provider.Chat(context.Background(), model.Request{Task: model.TaskLearningPlan, Prompt: "make plan"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +138,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
-func assertDeepSeekRequest(t *testing.T, r *http.Request) {
+func assertRequest(t *testing.T, r *http.Request) {
 	t.Helper()
 	if r.Method != http.MethodPost {
 		t.Fatalf("unexpected method: %s", r.Method)
@@ -157,7 +159,7 @@ func jsonResponse(body string) *http.Response {
 	}
 }
 
-func streamResponse(body string) *http.Response {
+func sseResponse(body string) *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(bytes.NewBufferString(body)),
