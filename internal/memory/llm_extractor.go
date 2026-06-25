@@ -21,7 +21,7 @@ func NewLLMExtractor(router *model.Router) *LLMExtractor {
 
 func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]Entry, error) {
 	resp, err := e.router.Generate(ctx, model.Request{
-		Task:   "memory_extract",
+		Task:   model.TaskMemoryExtract,
 		Prompt: buildMemoryExtractionPrompt(req),
 	})
 	if err != nil {

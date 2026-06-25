@@ -27,6 +27,16 @@ type Config struct {
 	TraceContextSnapshot    bool
 	TraceTokenEstimation    bool
 	ModelProvider           string
+	ModelDefaultModel       string
+	ModelTaskQA             string
+	ModelTaskLearningPlan   string
+	ModelTaskPractice       string
+	ModelTaskReview         string
+	ModelTaskMemoryExtract  string
+	ModelTimeout            time.Duration
+	ModelStreamTimeout      time.Duration
+	ModelMaxRetries         int
+	ModelRetryBackoff       time.Duration
 	DeepSeekAPIKey          string
 	DeepSeekBaseURL         string
 	DeepSeekModel           string
@@ -57,6 +67,16 @@ func LoadConfig() Config {
 		TraceContextSnapshot:    envBool("TRACE_CONTEXT_SNAPSHOT", true),
 		TraceTokenEstimation:    envBool("TRACE_TOKEN_ESTIMATION_ENABLED", true),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
+		ModelDefaultModel:       envOrDefault("MODEL_DEFAULT_MODEL", envOrDefault("DEEPSEEK_MODEL", "deepseek-v4-flash")),
+		ModelTaskQA:             os.Getenv("MODEL_TASK_QA"),
+		ModelTaskLearningPlan:   os.Getenv("MODEL_TASK_LEARNING_PLAN"),
+		ModelTaskPractice:       os.Getenv("MODEL_TASK_PRACTICE"),
+		ModelTaskReview:         os.Getenv("MODEL_TASK_REVIEW"),
+		ModelTaskMemoryExtract:  os.Getenv("MODEL_TASK_MEMORY_EXTRACT"),
+		ModelTimeout:            envDuration("MODEL_TIMEOUT", 60*time.Second),
+		ModelStreamTimeout:      envDuration("MODEL_STREAM_TIMEOUT", 120*time.Second),
+		ModelMaxRetries:         envInt("MODEL_MAX_RETRIES", 0),
+		ModelRetryBackoff:       envDuration("MODEL_RETRY_BACKOFF", 500*time.Millisecond),
 		DeepSeekAPIKey:          os.Getenv("DEEPSEEK_API_KEY"),
 		DeepSeekBaseURL:         envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 		DeepSeekModel:           envOrDefault("DEEPSEEK_MODEL", "deepseek-v4-flash"),

@@ -69,7 +69,11 @@ func NewDeepSeekProvider(cfg DeepSeekConfig) (*DeepSeekProvider, error) {
 	}, nil
 }
 
-func (p *DeepSeekProvider) Generate(ctx context.Context, req Request) (Response, error) {
+func (p *DeepSeekProvider) Name() string {
+	return "deepseek"
+}
+
+func (p *DeepSeekProvider) Chat(ctx context.Context, req Request) (Response, error) {
 	payload := p.newChatRequest(req, false)
 	respBody, err := p.doChatRequest(ctx, payload)
 	if err != nil {
@@ -84,11 +88,22 @@ func (p *DeepSeekProvider) Generate(ctx context.Context, req Request) (Response,
 		return Response{}, errors.New("deepseek api returned no choices")
 	}
 
-	return Response{Text: strings.TrimSpace(chatResp.Choices[0].Message.Content)}, nil
+	text := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	return ResponseFromText(text, ResponseMetadata{
+		Provider:   p.Name(),
+		Model:      payload.Model,
+		Task:       req.Task,
+		Capability: CapabilityChat,
+		TraceID:    req.TraceID,
+	}, Usage{Estimated: true}), nil
 }
 
-func (p *DeepSeekProvider) GenerateStream(ctx context.Context, req Request) (<-chan StreamChunk, <-chan error) {
-	chunks := make(chan StreamChunk)
+func (p *DeepSeekProvider) Generate(ctx context.Context, req Request) (Response, error) {
+	return p.Chat(ctx, req)
+}
+
+func (p *DeepSeekProvider) ChatStream(ctx context.Context, req Request) (<-chan StreamEvent, <-chan error) {
+	chunks := make(chan StreamEvent)
 	errs := make(chan error, 1)
 
 	go func() {
@@ -140,7 +155,13 @@ func (p *DeepSeekProvider) GenerateStream(ctx context.Context, req Request) (<-c
 
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
-				chunks <- StreamChunk{Done: true}
+				chunks <- StreamEvent{Type: "completed", Done: true, Metadata: ResponseMetadata{
+					Provider:   p.Name(),
+					Model:      payload.Model,
+					Task:       req.Task,
+					Capability: CapabilityChat,
+					TraceID:    req.TraceID,
+				}}
 				return
 			}
 
@@ -157,7 +178,13 @@ func (p *DeepSeekProvider) GenerateStream(ctx context.Context, req Request) (<-c
 				case <-ctx.Done():
 					errs <- ctx.Err()
 					return
-				case chunks <- StreamChunk{Text: choice.Delta.Content}:
+				case chunks <- StreamEvent{Type: "delta", Delta: choice.Delta.Content, Text: choice.Delta.Content, Metadata: ResponseMetadata{
+					Provider:   p.Name(),
+					Model:      payload.Model,
+					Task:       req.Task,
+					Capability: CapabilityChat,
+					TraceID:    req.TraceID,
+				}}:
 				}
 			}
 		}
@@ -166,18 +193,32 @@ func (p *DeepSeekProvider) GenerateStream(ctx context.Context, req Request) (<-c
 			errs <- err
 			return
 		}
-		chunks <- StreamChunk{Done: true}
+		chunks <- StreamEvent{Type: "completed", Done: true, Metadata: ResponseMetadata{
+			Provider:   p.Name(),
+			Model:      payload.Model,
+			Task:       req.Task,
+			Capability: CapabilityChat,
+			TraceID:    req.TraceID,
+		}}
 	}()
 
 	return chunks, errs
 }
 
+func (p *DeepSeekProvider) GenerateStream(ctx context.Context, req Request) (<-chan StreamEvent, <-chan error) {
+	return p.ChatStream(ctx, req)
+}
+
 func (p *DeepSeekProvider) newChatRequest(req Request, stream bool) deepSeekChatRequest {
+	modelName := req.Model
+	if modelName == "" {
+		modelName = selectModel(req.Task, p.model, p.reasoningModel)
+	}
 	payload := deepSeekChatRequest{
-		Model: selectModel(req.Task, p.model, p.reasoningModel),
+		Model: modelName,
 		Messages: []deepSeekMessage{
 			{Role: "system", Content: systemPromptForTask(req.Task)},
-			{Role: "user", Content: req.Prompt},
+			{Role: "user", Content: req.ChatPrompt()},
 		},
 		Stream: stream,
 	}
@@ -222,29 +263,29 @@ func (p *DeepSeekProvider) doChatRequest(ctx context.Context, payload deepSeekCh
 	return respBody, nil
 }
 
-func selectModel(task string, defaultModel string, reasoningModel string) string {
+func selectModel(task Task, defaultModel string, reasoningModel string) string {
 	if shouldUseReasoning(task) {
 		return reasoningModel
 	}
 	return defaultModel
 }
 
-func shouldUseReasoning(task string) bool {
+func shouldUseReasoning(task Task) bool {
 	switch task {
-	case "learning_plan", "review":
+	case TaskLearningPlan, TaskReview:
 		return true
 	default:
 		return false
 	}
 }
 
-func systemPromptForTask(task string) string {
+func systemPromptForTask(task Task) string {
 	switch task {
-	case "learning_plan":
+	case TaskLearningPlan:
 		return "你是一个严谨的学习规划 Agent。请根据用户目标输出可执行、分阶段、可复盘的学习计划。回答使用中文。"
-	case "practice":
+	case TaskPractice:
 		return "你是一个学习练习 Agent。请根据用户主题生成练习题，并给出简洁的检验标准。回答使用中文。"
-	case "review":
+	case TaskReview:
 		return "你是一个学习复盘 Agent。请帮助用户总结进展、定位薄弱点，并给出下一步行动。回答使用中文。"
 	default:
 		return "你是一个学习辅导 Agent。请直接、准确地回答用户问题，必要时给出例子。回答使用中文。"

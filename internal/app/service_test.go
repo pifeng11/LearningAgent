@@ -230,6 +230,31 @@ func TestLoadConfigReadsDebugTraceSettings(t *testing.T) {
 	}
 }
 
+func TestLoadConfigReadsModelRoutingSettings(t *testing.T) {
+	t.Setenv("MODEL_DEFAULT_MODEL", "flash")
+	t.Setenv("MODEL_TASK_QA", "qa-model")
+	t.Setenv("MODEL_TASK_LEARNING_PLAN", "plan-model")
+	t.Setenv("MODEL_TIMEOUT", "30s")
+	t.Setenv("MODEL_STREAM_TIMEOUT", "90s")
+	t.Setenv("MODEL_MAX_RETRIES", "2")
+	t.Setenv("MODEL_RETRY_BACKOFF", "250ms")
+
+	cfg := LoadConfig()
+
+	if cfg.ModelDefaultModel != "flash" {
+		t.Fatalf("expected default model, got %s", cfg.ModelDefaultModel)
+	}
+	if cfg.ModelTaskQA != "qa-model" || cfg.ModelTaskLearningPlan != "plan-model" {
+		t.Fatalf("expected task route models, got %+v", cfg)
+	}
+	if cfg.ModelTimeout != 30*time.Second || cfg.ModelStreamTimeout != 90*time.Second {
+		t.Fatalf("expected model timeouts, got %s/%s", cfg.ModelTimeout, cfg.ModelStreamTimeout)
+	}
+	if cfg.ModelMaxRetries != 2 || cfg.ModelRetryBackoff != 250*time.Millisecond {
+		t.Fatalf("expected retry settings, got %d/%s", cfg.ModelMaxRetries, cfg.ModelRetryBackoff)
+	}
+}
+
 func TestAgentServiceGetPromptTrace(t *testing.T) {
 	traceStore := debugtrace.NewRingStore(10)
 	service := newAgentServiceWithStores(
@@ -245,7 +270,7 @@ func TestAgentServiceGetPromptTrace(t *testing.T) {
 		true,
 	)
 
-	service.savePromptTrace(context.Background(), "trace-1", "u1", "s1", state.IntentQA, "qa", promptbuilder.BuildResult{
+	service.savePromptTrace(context.Background(), "trace-1", "u1", "s1", state.IntentQA, model.TaskQA, promptbuilder.BuildResult{
 		UsedMemoryIDs:       []int64{1},
 		UsedHistoryIDs:      []string{"m1"},
 		ContextItems:        []promptbuilder.ContextItem{{ItemType: "current_input", Content: "hello", Ordinal: 0}},
@@ -287,7 +312,7 @@ func TestAgentServiceGetPromptTraceCanIncludePrompt(t *testing.T) {
 		true,
 	)
 
-	service.savePromptTrace(context.Background(), "trace-1", "u1", "s1", state.IntentQA, "qa", promptbuilder.BuildResult{
+	service.savePromptTrace(context.Background(), "trace-1", "u1", "s1", state.IntentQA, model.TaskQA, promptbuilder.BuildResult{
 		PromptChars: 13,
 		Prompt:      "visible prompt",
 	})
@@ -315,7 +340,7 @@ func TestAgentServiceReconstructPromptAndTokenReport(t *testing.T) {
 		true,
 	)
 
-	service.savePromptTrace(context.Background(), "trace-1", "u1", "s1", state.IntentQA, "qa", promptbuilder.BuildResult{
+	service.savePromptTrace(context.Background(), "trace-1", "u1", "s1", state.IntentQA, model.TaskQA, promptbuilder.BuildResult{
 		ContextItems: []promptbuilder.ContextItem{
 			{ItemType: "system_prompt", Content: "系统", Ordinal: 0},
 			{ItemType: "current_input", Content: "你好", Ordinal: 1},

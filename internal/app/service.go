@@ -56,7 +56,7 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	modelRouter := model.NewRouter(provider)
+	modelRouter := newModelRouterFromConfig(cfg, provider)
 	extractor, err := newMemoryExtractorFromConfig(cfg, modelRouter)
 	if err != nil {
 		return nil, err
@@ -84,6 +84,48 @@ func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unsupported MODEL_PROVIDER %q", cfg.ModelProvider)
 	}
+}
+
+func newModelRouterFromConfig(cfg Config, provider model.Provider) *model.Router {
+	defaultRoute := model.Route{
+		Provider:   provider.Name(),
+		Capability: model.CapabilityChat,
+		Model:      cfg.ModelDefaultModel,
+	}
+	taskRoutes := map[model.Task]model.Route{}
+	addTaskRoute(taskRoutes, model.TaskQA, cfg.ModelTaskQA)
+	addTaskRoute(taskRoutes, model.TaskLearningPlan, firstNonEmptyString(cfg.ModelTaskLearningPlan, cfg.DeepSeekReasoningModel))
+	addTaskRoute(taskRoutes, model.TaskPractice, cfg.ModelTaskPractice)
+	addTaskRoute(taskRoutes, model.TaskReview, firstNonEmptyString(cfg.ModelTaskReview, cfg.DeepSeekReasoningModel))
+	addTaskRoute(taskRoutes, model.TaskMemoryExtract, cfg.ModelTaskMemoryExtract)
+
+	return model.NewRouterWithConfig([]model.Provider{provider}, model.RouterConfig{
+		DefaultRoute:   defaultRoute,
+		TaskRoutes:     taskRoutes,
+		DefaultTimeout: cfg.ModelTimeout,
+		StreamTimeout:  cfg.ModelStreamTimeout,
+		MaxRetries:     cfg.ModelMaxRetries,
+		RetryBackoff:   cfg.ModelRetryBackoff,
+	})
+}
+
+func addTaskRoute(routes map[model.Task]model.Route, task model.Task, modelName string) {
+	if modelName == "" {
+		return
+	}
+	routes[task] = model.Route{
+		Capability: model.CapabilityChat,
+		Model:      modelName,
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func newMemoryExtractorFromConfig(cfg Config, modelRouter *model.Router) (memory.Extractor, error) {
@@ -504,12 +546,17 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		)
 
 		chunks, streamErrs := s.modelRouter.GenerateStream(ctx, model.Request{
-			Task:   modelTask,
-			Prompt: promptResult.Prompt,
+			TraceID: traceID,
+			Task:    modelTask,
+			Prompt:  promptResult.Prompt,
 		})
 
 		var answer strings.Builder
+		var modelMetadata model.ResponseMetadata
 		for chunk := range chunks {
+			if chunk.Metadata.Provider != "" || chunk.Metadata.Model != "" {
+				modelMetadata = chunk.Metadata
+			}
 			if chunk.Text != "" {
 				answer.WriteString(chunk.Text)
 				events <- ChatStreamEvent{
@@ -544,6 +591,10 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			"user_id", req.UserID,
 			"session_id", req.SessionID,
 			"intent", detectedIntent,
+			"provider", modelMetadata.Provider,
+			"model", modelMetadata.Model,
+			"model_task", modelMetadata.Task,
+			"model_latency_ms", modelMetadata.LatencyMS,
 			"duration_ms", time.Since(startedAt).Milliseconds(),
 			"answer_chars", len([]rune(answerText)),
 		)
@@ -651,7 +702,7 @@ func filterPromptHistory(history []conversation.Message, excludedIDs ...string) 
 	return result
 }
 
-func (s *AgentService) savePromptTrace(ctx context.Context, traceID string, userID string, sessionID string, detectedIntent state.Intent, modelTask string, promptResult promptbuilder.BuildResult) {
+func (s *AgentService) savePromptTrace(ctx context.Context, traceID string, userID string, sessionID string, detectedIntent state.Intent, modelTask model.Task, promptResult promptbuilder.BuildResult) {
 	promptText := ""
 	if s.debugPrompt {
 		promptText = promptResult.Prompt
@@ -672,7 +723,7 @@ func (s *AgentService) savePromptTrace(ctx context.Context, traceID string, user
 		UserID:                 userID,
 		SessionID:              sessionID,
 		Intent:                 string(detectedIntent),
-		ModelTask:              modelTask,
+		ModelTask:              string(modelTask),
 		UsedMemoryIDs:          promptResult.UsedMemoryIDs,
 		UsedHistoryIDs:         promptResult.UsedHistoryIDs,
 		MemoryCount:            promptResult.MemoryCount,
@@ -709,15 +760,15 @@ func toDebugTraceContextItems(items []promptbuilder.ContextItem) []debugtrace.Co
 	return result
 }
 
-func skillTaskForIntent(intent state.Intent) string {
+func skillTaskForIntent(intent state.Intent) model.Task {
 	switch intent {
 	case state.IntentLearningPlan:
-		return "learning_plan"
+		return model.TaskLearningPlan
 	case state.IntentPractice:
-		return "practice"
+		return model.TaskPractice
 	case state.IntentReview:
-		return "review"
+		return model.TaskReview
 	default:
-		return "qa"
+		return model.TaskQA
 	}
 }

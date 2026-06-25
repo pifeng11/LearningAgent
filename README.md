@@ -136,6 +136,16 @@ cp .env.example .env
 
 ```bash
 MODEL_PROVIDER=deepseek
+MODEL_DEFAULT_MODEL=deepseek-v4-flash
+MODEL_TASK_QA=deepseek-v4-flash
+MODEL_TASK_LEARNING_PLAN=deepseek-v4-pro
+MODEL_TASK_PRACTICE=deepseek-v4-flash
+MODEL_TASK_REVIEW=deepseek-v4-pro
+MODEL_TASK_MEMORY_EXTRACT=deepseek-v4-flash
+MODEL_TIMEOUT=60s
+MODEL_STREAM_TIMEOUT=120s
+MODEL_MAX_RETRIES=0
+MODEL_RETRY_BACKOFF=500ms
 DEEPSEEK_API_KEY=sk-xxx
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
@@ -167,8 +177,11 @@ make dev
 
 模型选择策略：
 
-- 普通问答和练习默认使用 `deepseek-v4-flash`。
-- 学习计划和复盘默认使用 `deepseek-v4-pro`。
+- 模型层按 `provider -> capability -> task route` 组织；当前只实现 chat capability。
+- `MODEL_PROVIDER` 控制厂商，例如 `mock`、`deepseek`；后续可扩展 `openai`、`bytedance` 等。
+- `MODEL_DEFAULT_MODEL` 是默认 chat 模型。
+- `MODEL_TASK_*` 可以按任务覆盖模型，例如学习计划和复盘走更强模型。
+- `MODEL_TIMEOUT`、`MODEL_STREAM_TIMEOUT`、`MODEL_MAX_RETRIES` 控制模型调用超时和重试。
 - 未设置 `MODEL_PROVIDER=deepseek` 时默认使用 mock provider，方便本地测试。
 
 REST:

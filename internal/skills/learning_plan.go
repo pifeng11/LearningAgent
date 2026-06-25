@@ -14,10 +14,10 @@ import (
 func RegisterBuiltins(registry *Registry, router *model.Router, memoryStore memory.Store) {
 	registry.Register(&MemoryLoadSkill{memory: memoryStore})
 	registry.Register(&MemorySaveSkill{memory: memoryStore})
-	registry.Register(&LearningSkill{name: "learning.plan", description: "生成学习计划", task: "learning_plan", router: router})
-	registry.Register(&LearningSkill{name: "learning.qa", description: "学习问答", task: "qa", router: router})
-	registry.Register(&LearningSkill{name: "learning.practice", description: "生成练习题", task: "practice", router: router})
-	registry.Register(&LearningSkill{name: "learning.review", description: "复盘总结", task: "review", router: router})
+	registry.Register(&LearningSkill{name: "learning.plan", description: "生成学习计划", task: model.TaskLearningPlan, router: router})
+	registry.Register(&LearningSkill{name: "learning.qa", description: "学习问答", task: model.TaskQA, router: router})
+	registry.Register(&LearningSkill{name: "learning.practice", description: "生成练习题", task: model.TaskPractice, router: router})
+	registry.Register(&LearningSkill{name: "learning.review", description: "复盘总结", task: model.TaskReview, router: router})
 }
 
 type MemoryLoadSkill struct {
@@ -73,7 +73,7 @@ func (s *MemorySaveSkill) Run(ctx context.Context, current state.AgentState) (st
 type LearningSkill struct {
 	name        string
 	description string
-	task        string
+	task        model.Task
 	router      *model.Router
 }
 
