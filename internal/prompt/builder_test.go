@@ -43,6 +43,15 @@ func TestBuilderBuildsLayeredPrompt(t *testing.T) {
 	if result.MemoryCount != 1 || result.HistoryMessageCount != 2 {
 		t.Fatalf("unexpected counts: %+v", result)
 	}
+	if len(result.ContextItems) != 5 {
+		t.Fatalf("expected context items, got %+v", result.ContextItems)
+	}
+	if result.ContextItems[0].ItemType != "system_prompt" {
+		t.Fatalf("expected system prompt item, got %+v", result.ContextItems[0])
+	}
+	if result.ContextItems[len(result.ContextItems)-1].ItemType != "current_input" {
+		t.Fatalf("expected current input item, got %+v", result.ContextItems[len(result.ContextItems)-1])
+	}
 }
 
 func TestBuilderLimitsHistoryAndMemories(t *testing.T) {

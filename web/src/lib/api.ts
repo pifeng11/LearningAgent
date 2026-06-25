@@ -34,6 +34,41 @@ export type ListMessagesResponse = {
   has_more: boolean;
 };
 
+export type PromptTrace = {
+  trace_id: string;
+  user_id: string;
+  session_id: string;
+  intent: string;
+  model_task: string;
+  used_memory_ids: number[];
+  used_history_ids: string[];
+  memory_count: number;
+  history_message_count: number;
+  prompt_chars: number;
+  estimated_prompt_tokens: number;
+  prompt_builder_version: string;
+  system_prompt_hash: string;
+  context_snapshot_enabled: boolean;
+  prompt?: string;
+  created_at: string;
+};
+
+export type ReconstructedPrompt = {
+  trace_id: string;
+  prompt: string;
+  prompt_chars: number;
+  source: string;
+};
+
+export type TokenReport = {
+  trace_id: string;
+  prompt: string;
+  prompt_chars: number;
+  estimated_prompt_tokens: number;
+  tokenizer: string;
+  tokens: Array<{ index: number; text: string; token_id?: number }>;
+};
+
 export async function listMessages(userId: string, sessionId: string, turns = 5, beforeId = "") {
   const params = new URLSearchParams({
     user_id: userId,
@@ -54,6 +89,30 @@ export async function listMessages(userId: string, sessionId: string, turns = 5,
     next_before_id: payload.next_before_id,
     has_more: payload.has_more ?? false,
   };
+}
+
+export async function getPromptTrace(traceId: string) {
+  const response = await fetch(`/api/v1/debug/traces/${encodeURIComponent(traceId)}`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as PromptTrace;
+}
+
+export async function reconstructPrompt(traceId: string) {
+  const response = await fetch(`/api/v1/debug/traces/${encodeURIComponent(traceId)}/reconstructed-prompt`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as ReconstructedPrompt;
+}
+
+export async function getTokenReport(traceId: string) {
+  const response = await fetch(`/api/v1/debug/traces/${encodeURIComponent(traceId)}/tokens`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+  return (await response.json()) as TokenReport;
 }
 
 type StreamCallbacks = {

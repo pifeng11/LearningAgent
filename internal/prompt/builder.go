@@ -40,9 +40,20 @@ type BuildResult struct {
 	Prompt              string
 	UsedMemoryIDs       []int64
 	UsedHistoryIDs      []string
+	ContextItems        []ContextItem
 	MemoryCount         int
 	HistoryMessageCount int
 	PromptChars         int
+}
+
+type ContextItem struct {
+	ItemType string
+	SourceID string
+	Role     string
+	Title    string
+	Content  string
+	Ordinal  int
+	Metadata map[string]any
 }
 
 func NewBuilder(config Config) *Builder {
@@ -63,6 +74,18 @@ func NewBuilder(config Config) *Builder {
 
 func (b *Builder) MaxHistoryMessages() int {
 	return b.config.MaxHistoryTurns * 2
+}
+
+func (b *Builder) ConfigSnapshot() map[string]any {
+	return map[string]any{
+		"max_history_turns": b.config.MaxHistoryTurns,
+		"max_memories":      b.config.MaxMemories,
+		"max_prompt_chars":  b.config.MaxPromptChars,
+	}
+}
+
+func (b *Builder) SystemPrompt() string {
+	return b.config.SystemPrompt
 }
 
 func (b *Builder) Build(req BuildRequest) BuildResult {
@@ -91,14 +114,25 @@ func (b *Builder) Build(req BuildRequest) BuildResult {
 
 func (b *Builder) render(userInput string, memories []memory.Entry, history []conversation.Message) BuildResult {
 	var builder strings.Builder
+	contextItems := []ContextItem{}
+	ordinal := 0
+
+	systemPrompt := strings.TrimSpace(b.config.SystemPrompt)
 	builder.WriteString("# System Instruction\n")
-	builder.WriteString(strings.TrimSpace(b.config.SystemPrompt))
+	builder.WriteString(systemPrompt)
 	builder.WriteString("\n\n")
+	contextItems = append(contextItems, ContextItem{
+		ItemType: "system_prompt",
+		Content:  systemPrompt,
+		Ordinal:  ordinal,
+	})
+	ordinal++
 
 	if len(memories) > 0 {
 		builder.WriteString("# Long-term Memory\n")
 		// TODO: memory 当前按规则排序筛选；后续接向量召回、相关性评分和 confidence/decay 权重。
 		for _, entry := range memories {
+			content := truncate(entry.Content, 500)
 			builder.WriteString("- [")
 			builder.WriteString(entry.Type)
 			builder.WriteString("/")
@@ -106,8 +140,20 @@ func (b *Builder) render(userInput string, memories []memory.Entry, history []co
 			builder.WriteString("] ")
 			builder.WriteString(entry.Title)
 			builder.WriteString(": ")
-			builder.WriteString(truncate(entry.Content, 500))
+			builder.WriteString(content)
 			builder.WriteString("\n")
+			contextItems = append(contextItems, ContextItem{
+				ItemType: "memory",
+				SourceID: memorySourceID(entry),
+				Title:    entry.Title,
+				Content:  content,
+				Ordinal:  ordinal,
+				Metadata: map[string]any{
+					"type":  entry.Type,
+					"scope": entry.Scope,
+				},
+			})
+			ordinal++
 		}
 		builder.WriteString("\n")
 	}
@@ -116,27 +162,51 @@ func (b *Builder) render(userInput string, memories []memory.Entry, history []co
 		builder.WriteString("# Recent Conversation\n")
 		// TODO: history 当前只取最近窗口；后续增加 session summary，避免长会话只依赖最近 N 轮。
 		for _, message := range history {
-			builder.WriteString(formatRole(message.Role))
+			content := truncate(message.Content, 1000)
+			role := formatRole(message.Role)
+			builder.WriteString(role)
 			builder.WriteString(": ")
-			builder.WriteString(truncate(message.Content, 1000))
+			builder.WriteString(content)
 			builder.WriteString("\n")
+			contextItems = append(contextItems, ContextItem{
+				ItemType: "history",
+				SourceID: message.ID,
+				Role:     role,
+				Content:  content,
+				Ordinal:  ordinal,
+			})
+			ordinal++
 		}
 		builder.WriteString("\n")
 	}
 
 	// TODO: system prompt 当前是单模板；后续支持按 task/intent 选择模板，并记录 prompt version。
+	currentInput := strings.TrimSpace(userInput)
 	builder.WriteString("# Current User Input\n")
-	builder.WriteString(strings.TrimSpace(userInput))
+	builder.WriteString(currentInput)
+	contextItems = append(contextItems, ContextItem{
+		ItemType: "current_input",
+		Content:  currentInput,
+		Ordinal:  ordinal,
+	})
 
 	result := BuildResult{
 		Prompt:              builder.String(),
 		UsedMemoryIDs:       memoryIDs(memories),
 		UsedHistoryIDs:      historyIDs(history),
+		ContextItems:        contextItems,
 		MemoryCount:         len(memories),
 		HistoryMessageCount: len(history),
 	}
 	result.PromptChars = len([]rune(result.Prompt))
 	return result
+}
+
+func memorySourceID(entry memory.Entry) string {
+	if entry.ID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", entry.ID)
 }
 
 func selectMemories(memories []memory.Entry, limit int) []memory.Entry {

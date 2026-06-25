@@ -11,7 +11,14 @@ import {
   User,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { listMessages, streamChat, type ChatStreamEvent, type ConversationMessage } from "./lib/api";
+import {
+  getPromptTrace,
+  listMessages,
+  streamChat,
+  type ChatStreamEvent,
+  type ConversationMessage,
+  type PromptTrace,
+} from "./lib/api";
 
 type Message = {
   id: string;
@@ -47,6 +54,9 @@ function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextBeforeId, setNextBeforeId] = useState("");
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [lastTraceId, setLastTraceId] = useState("");
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [promptTrace, setPromptTrace] = useState<PromptTrace | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const canSend = input.trim().length > 0 && status !== "connecting" && status !== "streaming";
@@ -76,6 +86,7 @@ function App() {
 
     setHistoryLoading(true);
     setError("");
+    setPromptTrace(null);
 
     listMessages(normalizedUserID, normalizedSessionID, defaultHistoryTurns)
       .then((historyPage) => {
@@ -132,6 +143,23 @@ function App() {
       setError(message);
     } finally {
       setLoadingMore(false);
+    }
+  }
+
+  async function loadPromptTrace() {
+    if (!lastTraceId || traceLoading) {
+      return;
+    }
+
+    setTraceLoading(true);
+    setError("");
+    try {
+      setPromptTrace(await getPromptTrace(lastTraceId));
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "加载调试信息失败";
+      setError(message);
+    } finally {
+      setTraceLoading(false);
     }
   }
 
@@ -192,9 +220,13 @@ function App() {
     if (streamEvent.intent) {
       setLastIntent(streamEvent.intent);
     }
+    if (streamEvent.trace_id) {
+      setLastTraceId(streamEvent.trace_id);
+    }
 
     if (streamEvent.type === "agent.started") {
       setStatus("streaming");
+      setPromptTrace(null);
       return;
     }
 
@@ -254,6 +286,8 @@ function App() {
     setStatus("idle");
     setError("");
     setLastIntent("待识别");
+    setLastTraceId("");
+    setPromptTrace(null);
     setMessages([
       ...welcomeMessages("新的会话已经准备好。输入你的学习目标或问题即可开始。"),
     ]);
@@ -310,6 +344,40 @@ function App() {
               <span className="text-stone-700">意图：{lastIntent}</span>
               <CheckCircle2 size={18} className="text-stone-500" />
               <span className="text-stone-700">历史：{historyLoading ? "加载中" : "已同步"}</span>
+            </div>
+          </section>
+
+          <section className="mt-7 rounded-lg border border-stone-300 bg-white/70 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-stone-700">调试上下文</h2>
+              <button
+                type="button"
+                onClick={loadPromptTrace}
+                disabled={!lastTraceId || traceLoading}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-stone-300 bg-white px-2.5 text-xs font-medium text-stone-700 transition hover:border-emerald-700 disabled:cursor-not-allowed disabled:text-stone-400"
+              >
+                {traceLoading ? "读取中" : "查看摘要"}
+              </button>
+            </div>
+            <div className="mt-3 space-y-2 text-xs text-stone-600">
+              <div className="break-all">trace_id：{lastTraceId || "暂无"}</div>
+              {promptTrace ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <DebugMetric label="意图" value={promptTrace.intent} />
+                  <DebugMetric label="任务" value={promptTrace.model_task} />
+                  <DebugMetric label="记忆" value={String(promptTrace.memory_count)} />
+                  <DebugMetric label="历史" value={String(promptTrace.history_message_count)} />
+                  <DebugMetric label="字符" value={String(promptTrace.prompt_chars)} />
+                  <DebugMetric label="Token" value={String(promptTrace.estimated_prompt_tokens)} />
+                  <DebugMetric label="Prompt" value={promptTrace.prompt ? "已返回" : "已隐藏"} />
+                  <DebugMetric label="快照" value={promptTrace.context_snapshot_enabled ? "已保存" : "关闭"} />
+                </div>
+              ) : null}
+              {promptTrace?.prompt ? (
+                <pre className="max-h-40 overflow-auto rounded-md border border-stone-200 bg-stone-50 p-2 text-[11px] leading-5 text-stone-700">
+                  {promptTrace.prompt}
+                </pre>
+              ) : null}
             </div>
           </section>
 
@@ -461,6 +529,15 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
       {icon}
       {label}
     </span>
+  );
+}
+
+function DebugMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-stone-200 bg-white px-2 py-1.5">
+      <div className="text-[11px] text-stone-500">{label}</div>
+      <div className="mt-0.5 truncate font-medium text-stone-800">{value}</div>
+    </div>
   );
 }
 

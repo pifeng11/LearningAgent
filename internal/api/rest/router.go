@@ -15,6 +15,9 @@ func NewRouter(service *app.AgentService) *gin.Engine {
 	handler := NewHandler(service)
 
 	router.GET("/api/v1/health", handler.Health)
+	router.GET("/api/v1/debug/traces/:trace_id", handler.GetPromptTrace)
+	router.GET("/api/v1/debug/traces/:trace_id/reconstructed-prompt", handler.ReconstructPrompt)
+	router.GET("/api/v1/debug/traces/:trace_id/tokens", handler.GetTokenReport)
 	router.GET("/api/v1/agent/messages", handler.ListMessages)
 	router.POST("/api/v1/agent/chat", handler.Chat)
 	router.POST("/api/v1/agent/chat/stream", handler.ChatStream)

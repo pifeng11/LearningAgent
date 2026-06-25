@@ -19,6 +19,13 @@ type Config struct {
 	PromptMaxMemories       int
 	PromptMaxChars          int
 	PromptSystemFile        string
+	DebugTraceEnabled       bool
+	DebugTraceCapacity      int
+	DebugPromptEnabled      bool
+	TraceStore              string
+	TraceCapturePromptText  bool
+	TraceContextSnapshot    bool
+	TraceTokenEstimation    bool
 	ModelProvider           string
 	DeepSeekAPIKey          string
 	DeepSeekBaseURL         string
@@ -42,6 +49,13 @@ func LoadConfig() Config {
 		PromptMaxMemories:       envInt("PROMPT_MAX_MEMORIES", 8),
 		PromptMaxChars:          envInt("PROMPT_MAX_CHARS", 12000),
 		PromptSystemFile:        os.Getenv("PROMPT_SYSTEM_FILE"),
+		DebugTraceEnabled:       envBool("DEBUG_TRACE_ENABLED", true),
+		DebugTraceCapacity:      envInt("DEBUG_TRACE_CAPACITY", 100),
+		DebugPromptEnabled:      envBool("DEBUG_PROMPT_ENABLED", false),
+		TraceStore:              envOrDefault("TRACE_STORE", "memory"),
+		TraceCapturePromptText:  envBool("TRACE_CAPTURE_PROMPT_TEXT", false),
+		TraceContextSnapshot:    envBool("TRACE_CONTEXT_SNAPSHOT", true),
+		TraceTokenEstimation:    envBool("TRACE_TOKEN_ESTIMATION_ENABLED", true),
 		ModelProvider:           envOrDefault("MODEL_PROVIDER", "mock"),
 		DeepSeekAPIKey:          os.Getenv("DEEPSEEK_API_KEY"),
 		DeepSeekBaseURL:         envOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),

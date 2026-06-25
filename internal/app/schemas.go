@@ -21,6 +21,59 @@ type ListMessagesResponse struct {
 	HasMore      bool                  `json:"has_more"`
 }
 
+type PromptTraceResponse struct {
+	TraceID                string             `json:"trace_id"`
+	UserID                 string             `json:"user_id"`
+	SessionID              string             `json:"session_id"`
+	Intent                 string             `json:"intent"`
+	ModelTask              string             `json:"model_task"`
+	UsedMemoryIDs          []int64            `json:"used_memory_ids"`
+	UsedHistoryIDs         []string           `json:"used_history_ids"`
+	MemoryCount            int                `json:"memory_count"`
+	HistoryMessageCount    int                `json:"history_message_count"`
+	PromptChars            int                `json:"prompt_chars"`
+	EstimatedPromptTokens  int                `json:"estimated_prompt_tokens"`
+	PromptBuilderVersion   string             `json:"prompt_builder_version"`
+	SystemPromptHash       string             `json:"system_prompt_hash"`
+	PromptConfig           map[string]any     `json:"prompt_config,omitempty"`
+	Prompt                 string             `json:"prompt,omitempty"`
+	ContextItems           []TraceContextItem `json:"context_items,omitempty"`
+	ContextSnapshotEnabled bool               `json:"context_snapshot_enabled"`
+	CreatedAt              time.Time          `json:"created_at"`
+}
+
+type TraceContextItem struct {
+	ItemType string         `json:"item_type"`
+	SourceID string         `json:"source_id,omitempty"`
+	Role     string         `json:"role,omitempty"`
+	Title    string         `json:"title,omitempty"`
+	Content  string         `json:"content"`
+	Ordinal  int            `json:"ordinal"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type ReconstructedPromptResponse struct {
+	TraceID     string `json:"trace_id"`
+	Prompt      string `json:"prompt"`
+	PromptChars int    `json:"prompt_chars"`
+	Source      string `json:"source"`
+}
+
+type TokenReportResponse struct {
+	TraceID               string        `json:"trace_id"`
+	Prompt                string        `json:"prompt"`
+	PromptChars           int           `json:"prompt_chars"`
+	EstimatedPromptTokens int           `json:"estimated_prompt_tokens"`
+	Tokenizer             string        `json:"tokenizer"`
+	Tokens                []TokenRecord `json:"tokens"`
+}
+
+type TokenRecord struct {
+	Index   int    `json:"index"`
+	Text    string `json:"text"`
+	TokenID int    `json:"token_id,omitempty"`
+}
+
 type ConversationMessage struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`

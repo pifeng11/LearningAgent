@@ -73,6 +73,28 @@ PROMPT_SYSTEM_FILE=prompts/system.zh.md
 - `PROMPT_MAX_CHARS` 是当前字符预算，后续会替换为模型 token budget。
 - `PROMPT_SYSTEM_FILE` 为空时使用代码内置默认 system prompt；配置文件路径时会读取文件内容。
 
+## Prompt Trace 调试
+
+开发环境会保存最近的 prompt 上下文摘要，方便通过 `trace_id` 查看本轮模型请求使用了多少记忆和历史：
+
+```bash
+DEBUG_TRACE_ENABLED=true
+DEBUG_TRACE_CAPACITY=100
+DEBUG_PROMPT_ENABLED=false
+TRACE_STORE=memory
+TRACE_CAPTURE_PROMPT_TEXT=false
+TRACE_CONTEXT_SNAPSHOT=true
+TRACE_TOKEN_ESTIMATION_ENABLED=true
+```
+
+- `DEBUG_TRACE_ENABLED` 控制是否保存 prompt trace metadata。
+- `DEBUG_TRACE_CAPACITY` 控制内存 ring buffer 最多保留多少条 trace。
+- `DEBUG_PROMPT_ENABLED` 控制是否返回完整 prompt，默认关闭，避免泄漏用户隐私。
+- `TRACE_STORE=memory` 使用进程内 ring buffer；`TRACE_STORE=postgres` 会长期保存到 PostgreSQL。
+- `TRACE_CAPTURE_PROMPT_TEXT` 控制是否直接保存完整 prompt。
+- `TRACE_CONTEXT_SNAPSHOT` 控制是否保存 system prompt、memory、history、current input 的快照，用于后续复原 prompt。
+- `TRACE_TOKEN_ESTIMATION_ENABLED` 控制是否记录估算 token 数；当前是估算值，后续会接真实 tokenizer。
+
 如果要使用 PostgreSQL：
 
 ```bash
@@ -173,6 +195,16 @@ curl 'http://localhost:8080/api/v1/agent/messages?user_id=demo&session_id=defaul
 ```
 
 `turns` 由前端决定，后端最多允许每次查询 50 轮；`before_id` 用于游标分页查询更早消息。
+
+查询 Prompt Trace：
+
+```bash
+curl 'http://localhost:8080/api/v1/debug/traces/<trace_id>'
+curl 'http://localhost:8080/api/v1/debug/traces/<trace_id>/reconstructed-prompt'
+curl 'http://localhost:8080/api/v1/debug/traces/<trace_id>/tokens'
+```
+
+前端侧栏的“调试上下文”会使用本接口展示当前请求的上下文摘要。
 
 前端开发：
 

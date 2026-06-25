@@ -23,6 +23,39 @@ func (h *Handler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+func (h *Handler) GetPromptTrace(c *gin.Context) {
+	resp, err := h.service.GetPromptTrace(c.Request.Context(), c.Param("trace_id"))
+	if err != nil {
+		observability.LogError(c.Request.Context(), nil, "get prompt trace failed", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": observability.UserError(c.Request.Context(), err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) ReconstructPrompt(c *gin.Context) {
+	resp, err := h.service.ReconstructPrompt(c.Request.Context(), c.Param("trace_id"))
+	if err != nil {
+		observability.LogError(c.Request.Context(), nil, "reconstruct prompt failed", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": observability.UserError(c.Request.Context(), err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) GetTokenReport(c *gin.Context) {
+	resp, err := h.service.BuildTokenReport(c.Request.Context(), c.Param("trace_id"))
+	if err != nil {
+		observability.LogError(c.Request.Context(), nil, "get token report failed", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": observability.UserError(c.Request.Context(), err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 func (h *Handler) ListMessages(c *gin.Context) {
 	turns, err := strconv.Atoi(c.DefaultQuery("turns", "5"))
 	if err != nil {

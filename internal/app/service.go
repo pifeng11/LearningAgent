@@ -15,24 +15,31 @@ import (
 	"learning-agent/internal/agent/runtime"
 	"learning-agent/internal/agent/state"
 	"learning-agent/internal/conversation"
+	"learning-agent/internal/debugtrace"
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
 	"learning-agent/internal/observability"
 	promptbuilder "learning-agent/internal/prompt"
 	"learning-agent/internal/skills"
 	"learning-agent/internal/storage"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type AgentService struct {
-	intentClassifier  *intent.Classifier
-	planner           *planner.Planner
-	executor          *runtime.Executor
-	modelRouter       *model.Router
-	memoryStore       memory.Store
-	conversationStore conversation.Store
-	memoryExtractor   memory.Extractor
-	memoryExtractTTL  time.Duration
-	promptBuilder     *promptbuilder.Builder
+	intentClassifier   *intent.Classifier
+	planner            *planner.Planner
+	executor           *runtime.Executor
+	modelRouter        *model.Router
+	memoryStore        memory.Store
+	conversationStore  conversation.Store
+	memoryExtractor    memory.Extractor
+	memoryExtractTTL   time.Duration
+	promptBuilder      *promptbuilder.Builder
+	traceStore         debugtrace.Store
+	debugPrompt        bool
+	traceSnapshot      bool
+	traceTokenEstimate bool
 }
 
 func NewAgentService() *AgentService {
@@ -45,7 +52,7 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	memoryStore, conversationStore, err := newStoresFromConfig(cfg)
+	memoryStore, conversationStore, traceStore, err := newStoresFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +65,7 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout, promptBuilder), nil
+	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout, promptBuilder, traceStore, cfg.TraceCapturePromptText || cfg.DebugPromptEnabled, cfg.TraceContextSnapshot, cfg.TraceTokenEstimation), nil
 }
 
 func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
@@ -91,15 +98,18 @@ func newMemoryExtractorFromConfig(cfg Config, modelRouter *model.Router) (memory
 }
 
 func newAgentService(modelRouter *model.Router) *AgentService {
-	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second, defaultPromptBuilder())
+	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second, defaultPromptBuilder(), debugtrace.NoopStore{}, false, true, true)
 }
 
-func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration, promptBuilder *promptbuilder.Builder) *AgentService {
+func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration, promptBuilder *promptbuilder.Builder, traceStore debugtrace.Store, debugPrompt bool, traceContextSnapshot bool, traceTokenEstimation bool) *AgentService {
 	if memoryExtractTTL <= 0 {
 		memoryExtractTTL = 30 * time.Second
 	}
 	if promptBuilder == nil {
 		promptBuilder = defaultPromptBuilder()
+	}
+	if traceStore == nil {
+		traceStore = debugtrace.NoopStore{}
 	}
 
 	registry := skills.NewRegistry()
@@ -107,15 +117,36 @@ func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Sto
 	skills.RegisterBuiltins(registry, modelRouter, memoryStore)
 
 	return &AgentService{
-		intentClassifier:  intent.NewClassifier(),
-		planner:           planner.NewPlanner(),
-		executor:          runtime.NewExecutor(registry, memoryStore),
-		modelRouter:       modelRouter,
-		memoryStore:       memoryStore,
-		conversationStore: conversationStore,
-		memoryExtractor:   extractor,
-		memoryExtractTTL:  memoryExtractTTL,
-		promptBuilder:     promptBuilder,
+		intentClassifier:   intent.NewClassifier(),
+		planner:            planner.NewPlanner(),
+		executor:           runtime.NewExecutor(registry, memoryStore),
+		modelRouter:        modelRouter,
+		memoryStore:        memoryStore,
+		conversationStore:  conversationStore,
+		memoryExtractor:    extractor,
+		memoryExtractTTL:   memoryExtractTTL,
+		promptBuilder:      promptBuilder,
+		traceStore:         traceStore,
+		debugPrompt:        debugPrompt,
+		traceSnapshot:      traceContextSnapshot,
+		traceTokenEstimate: traceTokenEstimation,
+	}
+}
+
+func newTraceStoreFromConfig(cfg Config, pool *pgxpool.Pool) (debugtrace.Store, error) {
+	if !cfg.DebugTraceEnabled {
+		return debugtrace.NoopStore{}, nil
+	}
+	switch strings.ToLower(cfg.TraceStore) {
+	case "", "memory":
+		return debugtrace.NewRingStore(cfg.DebugTraceCapacity), nil
+	case "postgres", "pg":
+		if pool == nil {
+			return nil, fmt.Errorf("TRACE_STORE=postgres requires MEMORY_STORE=postgres in this version")
+		}
+		return debugtrace.NewPostgresStore(pool), nil
+	default:
+		return nil, fmt.Errorf("unsupported TRACE_STORE %q", cfg.TraceStore)
 	}
 }
 
@@ -141,27 +172,40 @@ func defaultPromptBuilder() *promptbuilder.Builder {
 	return promptbuilder.NewBuilder(promptbuilder.Config{})
 }
 
-func newStoresFromConfig(cfg Config) (memory.Store, conversation.Store, error) {
+func newStoresFromConfig(cfg Config) (memory.Store, conversation.Store, debugtrace.Store, error) {
 	switch strings.ToLower(cfg.MemoryStore) {
 	case "", "local":
-		return memory.NewLocalFileStore(cfg.LocalDataPath), conversation.NewLocalFileStore(cfg.LocalMessagesPath), nil
+		traceStore, err := newTraceStoreFromConfig(cfg, nil)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return memory.NewLocalFileStore(cfg.LocalDataPath), conversation.NewLocalFileStore(cfg.LocalMessagesPath), traceStore, nil
 	case "memory", "inmemory", "in-memory":
-		return memory.NewInMemoryStore(), conversation.NewInMemoryStore(), nil
+		traceStore, err := newTraceStoreFromConfig(cfg, nil)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return memory.NewInMemoryStore(), conversation.NewInMemoryStore(), traceStore, nil
 	case "postgres", "pg":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		pool, err := storage.OpenPostgres(ctx, cfg.DatabaseURL)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if err := pool.Ping(ctx); err != nil {
 			pool.Close()
-			return nil, nil, fmt.Errorf("ping postgres: %w", err)
+			return nil, nil, nil, fmt.Errorf("ping postgres: %w", err)
 		}
-		return memory.NewPostgresStore(pool), conversation.NewPostgresStore(pool), nil
+		traceStore, err := newTraceStoreFromConfig(cfg, pool)
+		if err != nil {
+			pool.Close()
+			return nil, nil, nil, err
+		}
+		return memory.NewPostgresStore(pool), conversation.NewPostgresStore(pool), traceStore, nil
 	default:
-		return nil, nil, fmt.Errorf("unsupported MEMORY_STORE %q", cfg.MemoryStore)
+		return nil, nil, nil, fmt.Errorf("unsupported MEMORY_STORE %q", cfg.MemoryStore)
 	}
 }
 
@@ -262,6 +306,103 @@ func (s *AgentService) ListMessages(ctx context.Context, req ListMessagesRequest
 	return resp, nil
 }
 
+func (s *AgentService) GetPromptTrace(ctx context.Context, traceID string) (PromptTraceResponse, error) {
+	trace, ok, err := s.traceStore.Get(ctx, traceID)
+	if err != nil {
+		return PromptTraceResponse{}, observability.Wrap(err, "trace_load_failed", "load prompt trace failed", "trace_id", traceID)
+	}
+	if !ok {
+		return PromptTraceResponse{}, observability.NewError("trace_not_found", "prompt trace not found", "trace_id", traceID)
+	}
+
+	return promptTraceResponse(trace), nil
+}
+
+func (s *AgentService) ReconstructPrompt(ctx context.Context, traceID string) (ReconstructedPromptResponse, error) {
+	trace, ok, err := s.traceStore.Get(ctx, traceID)
+	if err != nil {
+		return ReconstructedPromptResponse{}, observability.Wrap(err, "trace_load_failed", "load prompt trace failed", "trace_id", traceID)
+	}
+	if !ok {
+		return ReconstructedPromptResponse{}, observability.NewError("trace_not_found", "prompt trace not found", "trace_id", traceID)
+	}
+
+	reconstructed := debugtrace.ReconstructPrompt(trace)
+	return ReconstructedPromptResponse{
+		TraceID:     reconstructed.TraceID,
+		Prompt:      reconstructed.Prompt,
+		PromptChars: reconstructed.PromptChars,
+		Source:      reconstructed.Source,
+	}, nil
+}
+
+func (s *AgentService) BuildTokenReport(ctx context.Context, traceID string) (TokenReportResponse, error) {
+	trace, ok, err := s.traceStore.Get(ctx, traceID)
+	if err != nil {
+		return TokenReportResponse{}, observability.Wrap(err, "trace_load_failed", "load prompt trace failed", "trace_id", traceID)
+	}
+	if !ok {
+		return TokenReportResponse{}, observability.NewError("trace_not_found", "prompt trace not found", "trace_id", traceID)
+	}
+
+	report := debugtrace.BuildTokenReport(trace)
+	resp := TokenReportResponse{
+		TraceID:               report.TraceID,
+		Prompt:                report.Prompt,
+		PromptChars:           report.PromptChars,
+		EstimatedPromptTokens: report.EstimatedPromptTokens,
+		Tokenizer:             report.Tokenizer,
+		Tokens:                make([]TokenRecord, 0, len(report.Tokens)),
+	}
+	for _, token := range report.Tokens {
+		resp.Tokens = append(resp.Tokens, TokenRecord{
+			Index:   token.Index,
+			Text:    token.Text,
+			TokenID: token.TokenID,
+		})
+	}
+	return resp, nil
+}
+
+func promptTraceResponse(trace debugtrace.PromptTrace) PromptTraceResponse {
+	return PromptTraceResponse{
+		TraceID:                trace.TraceID,
+		UserID:                 trace.UserID,
+		SessionID:              trace.SessionID,
+		Intent:                 trace.Intent,
+		ModelTask:              trace.ModelTask,
+		UsedMemoryIDs:          trace.UsedMemoryIDs,
+		UsedHistoryIDs:         trace.UsedHistoryIDs,
+		MemoryCount:            trace.MemoryCount,
+		HistoryMessageCount:    trace.HistoryMessageCount,
+		PromptChars:            trace.PromptChars,
+		EstimatedPromptTokens:  trace.EstimatedPromptTokens,
+		PromptBuilderVersion:   trace.PromptBuilderVersion,
+		SystemPromptHash:       trace.SystemPromptHash,
+		PromptConfig:           trace.PromptConfig,
+		Prompt:                 trace.Prompt,
+		ContextItems:           traceContextItemsResponse(trace.ContextItems),
+		ContextSnapshotEnabled: trace.ContextSnapshotEnabled,
+		CreatedAt:              trace.CreatedAt,
+	}
+}
+
+func traceContextItemsResponse(items []debugtrace.ContextItem) []TraceContextItem {
+	result := make([]TraceContextItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, TraceContextItem{
+			ItemType: item.ItemType,
+			SourceID: item.SourceID,
+			Role:     item.Role,
+			Title:    item.Title,
+			Content:  item.Content,
+			Ordinal:  item.Ordinal,
+			Metadata: item.Metadata,
+		})
+	}
+	return result
+}
+
 func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan ChatStreamEvent, <-chan error) {
 	events := make(chan ChatStreamEvent)
 	errs := make(chan error, 1)
@@ -348,6 +489,8 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			Memories:  memories,
 			History:   filterPromptHistory(history, userMessage.ID, assistantMessage.ID),
 		})
+		modelTask := skillTaskForIntent(detectedIntent)
+		s.savePromptTrace(ctx, traceID, req.UserID, req.SessionID, detectedIntent, modelTask, promptResult)
 		slog.InfoContext(ctx, "prompt context built",
 			"trace_id", traceID,
 			"user_id", req.UserID,
@@ -361,7 +504,7 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		)
 
 		chunks, streamErrs := s.modelRouter.GenerateStream(ctx, model.Request{
-			Task:   skillTaskForIntent(detectedIntent),
+			Task:   modelTask,
 			Prompt: promptResult.Prompt,
 		})
 
@@ -504,6 +647,64 @@ func filterPromptHistory(history []conversation.Message, excludedIDs ...string) 
 			continue
 		}
 		result = append(result, message)
+	}
+	return result
+}
+
+func (s *AgentService) savePromptTrace(ctx context.Context, traceID string, userID string, sessionID string, detectedIntent state.Intent, modelTask string, promptResult promptbuilder.BuildResult) {
+	promptText := ""
+	if s.debugPrompt {
+		promptText = promptResult.Prompt
+	}
+	contextItems := []debugtrace.ContextItem{}
+	if s.traceSnapshot {
+		contextItems = toDebugTraceContextItems(promptResult.ContextItems)
+	}
+	estimatedTokens := 0
+	if s.traceTokenEstimate {
+		estimatedTokens = debugtrace.EstimateTokens(promptResult.Prompt)
+	}
+
+	// TODO: 线上环境必须给 debug trace 接口加认证和权限校验；prompt 可能包含用户隐私。
+	// TODO: 当前 trace store 是进程内 ring buffer；后续可接入 TTL、持久化或 OpenTelemetry span。
+	err := s.traceStore.Save(ctx, debugtrace.PromptTrace{
+		TraceID:                traceID,
+		UserID:                 userID,
+		SessionID:              sessionID,
+		Intent:                 string(detectedIntent),
+		ModelTask:              modelTask,
+		UsedMemoryIDs:          promptResult.UsedMemoryIDs,
+		UsedHistoryIDs:         promptResult.UsedHistoryIDs,
+		MemoryCount:            promptResult.MemoryCount,
+		HistoryMessageCount:    promptResult.HistoryMessageCount,
+		PromptChars:            promptResult.PromptChars,
+		EstimatedPromptTokens:  estimatedTokens,
+		PromptBuilderVersion:   debugtrace.PromptBuilderVersion,
+		SystemPromptHash:       debugtrace.HashText(s.promptBuilder.SystemPrompt()),
+		PromptConfig:           s.promptBuilder.ConfigSnapshot(),
+		Prompt:                 promptText,
+		ContextItems:           contextItems,
+		ContextSnapshotEnabled: s.traceSnapshot,
+		CreatedAt:              time.Now(),
+	})
+	if err != nil {
+		wrapped := observability.Wrap(err, "prompt_trace_save_failed", "save prompt trace failed", "trace_id", traceID)
+		observability.LogError(ctx, slog.Default(), "prompt trace save failed", wrapped)
+	}
+}
+
+func toDebugTraceContextItems(items []promptbuilder.ContextItem) []debugtrace.ContextItem {
+	result := make([]debugtrace.ContextItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, debugtrace.ContextItem{
+			ItemType: item.ItemType,
+			SourceID: item.SourceID,
+			Role:     item.Role,
+			Title:    item.Title,
+			Content:  item.Content,
+			Ordinal:  item.Ordinal,
+			Metadata: item.Metadata,
+		})
 	}
 	return result
 }
