@@ -23,6 +23,10 @@ func (e *LLMExtractor) Extract(ctx context.Context, req ExtractRequest) ([]Entry
 	resp, err := e.router.Generate(ctx, model.Request{
 		Task:   model.TaskMemoryExtract,
 		Prompt: buildMemoryExtractionPrompt(req),
+		Metadata: map[string]any{
+			model.RequestMetadataUserID:    req.UserID,
+			model.RequestMetadataSessionID: req.SessionID,
+		},
 	})
 	if err != nil {
 		return nil, err

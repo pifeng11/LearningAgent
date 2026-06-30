@@ -18,6 +18,8 @@ func NewRouter(service *app.AgentService) *gin.Engine {
 	router.GET("/api/v1/debug/traces/:trace_id", handler.GetPromptTrace)
 	router.GET("/api/v1/debug/traces/:trace_id/reconstructed-prompt", handler.ReconstructPrompt)
 	router.GET("/api/v1/debug/traces/:trace_id/tokens", handler.GetTokenReport)
+	router.GET("/api/v1/debug/model-calls", handler.ListModelCalls)
+	router.GET("/api/v1/debug/model-calls/:id", handler.GetModelCall)
 	router.GET("/api/v1/agent/messages", handler.ListMessages)
 	router.POST("/api/v1/agent/chat", handler.Chat)
 	router.POST("/api/v1/agent/chat/stream", handler.ChatStream)

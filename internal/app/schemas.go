@@ -74,6 +74,41 @@ type TokenRecord struct {
 	TokenID int    `json:"token_id,omitempty"`
 }
 
+type ListModelCallsRequest struct {
+	TraceID   string
+	UserID    string
+	SessionID string
+	Limit     int
+}
+
+type ListModelCallsResponse struct {
+	Calls []ModelCallResponse `json:"calls"`
+}
+
+type ModelCallResponse struct {
+	ID               int64          `json:"id"`
+	TraceID          string         `json:"trace_id"`
+	UserID           string         `json:"user_id"`
+	SessionID        string         `json:"session_id"`
+	Provider         string         `json:"provider"`
+	Model            string         `json:"model"`
+	Capability       string         `json:"capability"`
+	Task             string         `json:"task"`
+	Stream           bool           `json:"stream"`
+	Status           string         `json:"status"`
+	PromptTokens     int            `json:"prompt_tokens,omitempty"`
+	CompletionTokens int            `json:"completion_tokens,omitempty"`
+	TotalTokens      int            `json:"total_tokens,omitempty"`
+	LatencyMS        int64          `json:"latency_ms,omitempty"`
+	RetryCount       int            `json:"retry_count"`
+	ErrorType        string         `json:"error_type,omitempty"`
+	ErrorMessage     string         `json:"error_message,omitempty"`
+	RequestMetadata  map[string]any `json:"request_metadata,omitempty"`
+	ResponseMetadata map[string]any `json:"response_metadata,omitempty"`
+	StartedAt        time.Time      `json:"started_at"`
+	CompletedAt      *time.Time     `json:"completed_at,omitempty"`
+}
+
 type ConversationMessage struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`

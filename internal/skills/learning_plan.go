@@ -87,7 +87,14 @@ func (s *LearningSkill) Description() string {
 
 func (s *LearningSkill) Run(ctx context.Context, current state.AgentState) (state.AgentState, error) {
 	prompt := buildPrompt(current)
-	resp, err := s.router.Generate(ctx, model.Request{Task: s.task, Prompt: prompt})
+	resp, err := s.router.Generate(ctx, model.Request{
+		Task:   s.task,
+		Prompt: prompt,
+		Metadata: map[string]any{
+			model.RequestMetadataUserID:    current.UserID,
+			model.RequestMetadataSessionID: current.SessionID,
+		},
+	})
 	if err != nil {
 		return current, err
 	}

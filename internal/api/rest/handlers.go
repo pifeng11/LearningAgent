@@ -56,6 +56,47 @@ func (h *Handler) GetTokenReport(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+func (h *Handler) ListModelCalls(c *gin.Context) {
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if err != nil {
+		appErr := observability.NewError("invalid_request", "invalid limit", "cause", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), appErr)})
+		return
+	}
+
+	resp, err := h.service.ListModelCalls(c.Request.Context(), app.ListModelCallsRequest{
+		TraceID:   c.Query("trace_id"),
+		UserID:    c.Query("user_id"),
+		SessionID: c.Query("session_id"),
+		Limit:     limit,
+	})
+	if err != nil {
+		observability.LogError(c.Request.Context(), nil, "list model calls failed", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) GetModelCall(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		appErr := observability.NewError("invalid_request", "invalid model call id", "cause", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": observability.UserError(c.Request.Context(), appErr)})
+		return
+	}
+
+	resp, err := h.service.GetModelCall(c.Request.Context(), id)
+	if err != nil {
+		observability.LogError(c.Request.Context(), nil, "get model call failed", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": observability.UserError(c.Request.Context(), err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 func (h *Handler) ListMessages(c *gin.Context) {
 	turns, err := strconv.Atoi(c.DefaultQuery("turns", "5"))
 	if err != nil {

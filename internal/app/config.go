@@ -15,6 +15,7 @@ type Config struct {
 	MemoryExtractTimeout    time.Duration
 	LocalDataPath           string
 	LocalMessagesPath       string
+	LocalModelCallsPath     string
 	PromptMaxHistoryTurns   int
 	PromptMaxMemories       int
 	PromptMaxChars          int
@@ -55,6 +56,7 @@ func LoadConfig() Config {
 		MemoryExtractTimeout:    envDuration("MEMORY_EXTRACT_TIMEOUT", 30*time.Second),
 		LocalDataPath:           envOrDefault("LOCAL_DATA_PATH", "data/memories.jsonl"),
 		LocalMessagesPath:       envOrDefault("LOCAL_MESSAGES_PATH", "data/messages.jsonl"),
+		LocalModelCallsPath:     envOrDefault("LOCAL_MODEL_CALLS_PATH", "data/model_calls.jsonl"),
 		PromptMaxHistoryTurns:   envInt("PROMPT_MAX_HISTORY_TURNS", 5),
 		PromptMaxMemories:       envInt("PROMPT_MAX_MEMORIES", 8),
 		PromptMaxChars:          envInt("PROMPT_MAX_CHARS", 12000),

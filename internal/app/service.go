@@ -19,6 +19,7 @@ import (
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
 	"learning-agent/internal/model/deepseek"
+	"learning-agent/internal/modelcall"
 	"learning-agent/internal/observability"
 	promptbuilder "learning-agent/internal/prompt"
 	"learning-agent/internal/skills"
@@ -38,6 +39,7 @@ type AgentService struct {
 	memoryExtractTTL   time.Duration
 	promptBuilder      *promptbuilder.Builder
 	traceStore         debugtrace.Store
+	modelCallStore     modelcall.Store
 	debugPrompt        bool
 	traceSnapshot      bool
 	traceTokenEstimate bool
@@ -53,11 +55,11 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	memoryStore, conversationStore, traceStore, err := newStoresFromConfig(cfg)
+	memoryStore, conversationStore, traceStore, modelCallStore, err := newStoresFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	modelRouter := newModelRouterFromConfig(cfg, provider)
+	modelRouter := newModelRouterFromConfig(cfg, provider, modelCallStore)
 	extractor, err := newMemoryExtractorFromConfig(cfg, modelRouter)
 	if err != nil {
 		return nil, err
@@ -66,7 +68,7 @@ func NewAgentServiceFromConfig(cfg Config) (*AgentService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout, promptBuilder, traceStore, cfg.TraceCapturePromptText || cfg.DebugPromptEnabled, cfg.TraceContextSnapshot, cfg.TraceTokenEstimation), nil
+	return newAgentServiceWithStores(modelRouter, memoryStore, conversationStore, extractor, cfg.MemoryExtractTimeout, promptBuilder, traceStore, modelCallStore, cfg.TraceCapturePromptText || cfg.DebugPromptEnabled, cfg.TraceContextSnapshot, cfg.TraceTokenEstimation), nil
 }
 
 func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
@@ -87,7 +89,7 @@ func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
 	}
 }
 
-func newModelRouterFromConfig(cfg Config, provider model.Provider) *model.Router {
+func newModelRouterFromConfig(cfg Config, provider model.Provider, modelCallStore modelcall.Store) *model.Router {
 	defaultRoute := model.Route{
 		Provider:   provider.Name(),
 		Capability: model.CapabilityChat,
@@ -107,6 +109,7 @@ func newModelRouterFromConfig(cfg Config, provider model.Provider) *model.Router
 		StreamTimeout:  cfg.ModelStreamTimeout,
 		MaxRetries:     cfg.ModelMaxRetries,
 		RetryBackoff:   cfg.ModelRetryBackoff,
+		CallRecorder:   modelCallStore,
 	})
 }
 
@@ -141,10 +144,10 @@ func newMemoryExtractorFromConfig(cfg Config, modelRouter *model.Router) (memory
 }
 
 func newAgentService(modelRouter *model.Router) *AgentService {
-	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second, defaultPromptBuilder(), debugtrace.NoopStore{}, false, true, true)
+	return newAgentServiceWithStores(modelRouter, memory.NewInMemoryStore(), conversation.NewInMemoryStore(), memory.NewRuleExtractor(), 30*time.Second, defaultPromptBuilder(), debugtrace.NoopStore{}, modelcall.NoopStore{}, false, true, true)
 }
 
-func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration, promptBuilder *promptbuilder.Builder, traceStore debugtrace.Store, debugPrompt bool, traceContextSnapshot bool, traceTokenEstimation bool) *AgentService {
+func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Store, conversationStore conversation.Store, extractor memory.Extractor, memoryExtractTTL time.Duration, promptBuilder *promptbuilder.Builder, traceStore debugtrace.Store, modelCallStore modelcall.Store, debugPrompt bool, traceContextSnapshot bool, traceTokenEstimation bool) *AgentService {
 	if memoryExtractTTL <= 0 {
 		memoryExtractTTL = 30 * time.Second
 	}
@@ -153,6 +156,9 @@ func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Sto
 	}
 	if traceStore == nil {
 		traceStore = debugtrace.NoopStore{}
+	}
+	if modelCallStore == nil {
+		modelCallStore = modelcall.NoopStore{}
 	}
 
 	registry := skills.NewRegistry()
@@ -170,6 +176,7 @@ func newAgentServiceWithStores(modelRouter *model.Router, memoryStore memory.Sto
 		memoryExtractTTL:   memoryExtractTTL,
 		promptBuilder:      promptBuilder,
 		traceStore:         traceStore,
+		modelCallStore:     modelCallStore,
 		debugPrompt:        debugPrompt,
 		traceSnapshot:      traceContextSnapshot,
 		traceTokenEstimate: traceTokenEstimation,
@@ -215,40 +222,40 @@ func defaultPromptBuilder() *promptbuilder.Builder {
 	return promptbuilder.NewBuilder(promptbuilder.Config{})
 }
 
-func newStoresFromConfig(cfg Config) (memory.Store, conversation.Store, debugtrace.Store, error) {
+func newStoresFromConfig(cfg Config) (memory.Store, conversation.Store, debugtrace.Store, modelcall.Store, error) {
 	switch strings.ToLower(cfg.MemoryStore) {
 	case "", "local":
 		traceStore, err := newTraceStoreFromConfig(cfg, nil)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return memory.NewLocalFileStore(cfg.LocalDataPath), conversation.NewLocalFileStore(cfg.LocalMessagesPath), traceStore, nil
+		return memory.NewLocalFileStore(cfg.LocalDataPath), conversation.NewLocalFileStore(cfg.LocalMessagesPath), traceStore, modelcall.NewLocalFileStore(cfg.LocalModelCallsPath), nil
 	case "memory", "inmemory", "in-memory":
 		traceStore, err := newTraceStoreFromConfig(cfg, nil)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return memory.NewInMemoryStore(), conversation.NewInMemoryStore(), traceStore, nil
+		return memory.NewInMemoryStore(), conversation.NewInMemoryStore(), traceStore, modelcall.NoopStore{}, nil
 	case "postgres", "pg":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		pool, err := storage.OpenPostgres(ctx, cfg.DatabaseURL)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		if err := pool.Ping(ctx); err != nil {
 			pool.Close()
-			return nil, nil, nil, fmt.Errorf("ping postgres: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("ping postgres: %w", err)
 		}
 		traceStore, err := newTraceStoreFromConfig(cfg, pool)
 		if err != nil {
 			pool.Close()
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return memory.NewPostgresStore(pool), conversation.NewPostgresStore(pool), traceStore, nil
+		return memory.NewPostgresStore(pool), conversation.NewPostgresStore(pool), traceStore, modelcall.NewPostgresStore(pool), nil
 	default:
-		return nil, nil, nil, fmt.Errorf("unsupported MEMORY_STORE %q", cfg.MemoryStore)
+		return nil, nil, nil, nil, fmt.Errorf("unsupported MEMORY_STORE %q", cfg.MemoryStore)
 	}
 }
 
@@ -407,6 +414,42 @@ func (s *AgentService) BuildTokenReport(ctx context.Context, traceID string) (To
 	return resp, nil
 }
 
+func (s *AgentService) ListModelCalls(ctx context.Context, req ListModelCallsRequest) (ListModelCallsResponse, error) {
+	if req.Limit <= 0 {
+		req.Limit = 20
+	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+
+	calls, err := s.modelCallStore.ListModelCalls(ctx, model.ModelCallQuery{
+		TraceID:   req.TraceID,
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+		Limit:     req.Limit,
+	})
+	if err != nil {
+		return ListModelCallsResponse{}, observability.Wrap(err, "model_calls_list_failed", "list model calls failed", "trace_id", req.TraceID, "user_id", req.UserID, "session_id", req.SessionID)
+	}
+
+	resp := ListModelCallsResponse{Calls: make([]ModelCallResponse, 0, len(calls))}
+	for _, call := range calls {
+		resp.Calls = append(resp.Calls, modelCallResponse(call))
+	}
+	return resp, nil
+}
+
+func (s *AgentService) GetModelCall(ctx context.Context, id int64) (ModelCallResponse, error) {
+	call, ok, err := s.modelCallStore.GetModelCall(ctx, id)
+	if err != nil {
+		return ModelCallResponse{}, observability.Wrap(err, "model_call_load_failed", "load model call failed", "model_call_id", id)
+	}
+	if !ok {
+		return ModelCallResponse{}, observability.NewError("model_call_not_found", "model call not found", "model_call_id", id)
+	}
+	return modelCallResponse(call), nil
+}
+
 func promptTraceResponse(trace debugtrace.PromptTrace) PromptTraceResponse {
 	return PromptTraceResponse{
 		TraceID:                trace.TraceID,
@@ -444,6 +487,32 @@ func traceContextItemsResponse(items []debugtrace.ContextItem) []TraceContextIte
 		})
 	}
 	return result
+}
+
+func modelCallResponse(call model.ModelCall) ModelCallResponse {
+	return ModelCallResponse{
+		ID:               call.ID,
+		TraceID:          call.TraceID,
+		UserID:           call.UserID,
+		SessionID:        call.SessionID,
+		Provider:         call.Provider,
+		Model:            call.Model,
+		Capability:       string(call.Capability),
+		Task:             string(call.Task),
+		Stream:           call.Stream,
+		Status:           call.Status,
+		PromptTokens:     call.PromptTokens,
+		CompletionTokens: call.CompletionTokens,
+		TotalTokens:      call.TotalTokens,
+		LatencyMS:        call.LatencyMS,
+		RetryCount:       call.RetryCount,
+		ErrorType:        call.ErrorType,
+		ErrorMessage:     call.ErrorMessage,
+		RequestMetadata:  call.RequestMetadata,
+		ResponseMetadata: call.ResponseMetadata,
+		StartedAt:        call.StartedAt,
+		CompletedAt:      call.CompletedAt,
+	}
 }
 
 func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan ChatStreamEvent, <-chan error) {
@@ -550,6 +619,10 @@ func (s *AgentService) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 			TraceID: traceID,
 			Task:    modelTask,
 			Prompt:  promptResult.Prompt,
+			Metadata: map[string]any{
+				model.RequestMetadataUserID:    req.UserID,
+				model.RequestMetadataSessionID: req.SessionID,
+			},
 		})
 
 		var answer strings.Builder

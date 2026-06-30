@@ -13,6 +13,7 @@ import (
 	"learning-agent/internal/debugtrace"
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
+	"learning-agent/internal/modelcall"
 	promptbuilder "learning-agent/internal/prompt"
 )
 
@@ -49,6 +50,7 @@ func TestAgentServiceListMessages(t *testing.T) {
 		time.Second,
 		promptbuilder.NewBuilder(promptbuilder.Config{}),
 		debugtrace.NewRingStore(10),
+		modelcall.NoopStore{},
 		false,
 		true,
 		true,
@@ -100,6 +102,7 @@ func TestAgentServiceListMessagesUsesCursorPagination(t *testing.T) {
 		time.Second,
 		promptbuilder.NewBuilder(promptbuilder.Config{}),
 		debugtrace.NewRingStore(10),
+		modelcall.NoopStore{},
 		false,
 		true,
 		true,
@@ -265,6 +268,7 @@ func TestAgentServiceGetPromptTrace(t *testing.T) {
 		time.Second,
 		promptbuilder.NewBuilder(promptbuilder.Config{}),
 		traceStore,
+		modelcall.NoopStore{},
 		false,
 		true,
 		true,
@@ -307,6 +311,7 @@ func TestAgentServiceGetPromptTraceCanIncludePrompt(t *testing.T) {
 		time.Second,
 		promptbuilder.NewBuilder(promptbuilder.Config{}),
 		debugtrace.NewRingStore(10),
+		modelcall.NoopStore{},
 		true,
 		true,
 		true,
@@ -335,6 +340,7 @@ func TestAgentServiceReconstructPromptAndTokenReport(t *testing.T) {
 		time.Second,
 		promptbuilder.NewBuilder(promptbuilder.Config{}),
 		debugtrace.NewRingStore(10),
+		modelcall.NoopStore{},
 		false,
 		true,
 		true,
