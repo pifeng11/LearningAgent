@@ -95,6 +95,7 @@ type ModelError struct {
 	Model      string
 	Retryable  bool
 	StatusCode int
+	Metadata   map[string]any
 	Cause      error
 }
 

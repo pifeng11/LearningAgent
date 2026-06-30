@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"learning-agent/internal/model"
 )
 
 type AppError struct {
@@ -108,6 +110,18 @@ func LogError(ctx context.Context, logger *slog.Logger, message string, err erro
 	}
 	if cause := errors.Unwrap(err); cause != nil {
 		attrs = append(attrs, slog.String("cause", cause.Error()))
+	}
+	var modelErr *model.ModelError
+	if errors.As(err, &modelErr) {
+		attrs = append(attrs,
+			slog.String("model_provider", modelErr.Provider),
+			slog.String("model", modelErr.Model),
+			slog.Int("model_status_code", modelErr.StatusCode),
+			slog.Bool("model_retryable", modelErr.Retryable),
+		)
+		for key, value := range modelErr.Metadata {
+			attrs = append(attrs, slog.Any("model_"+key, value))
+		}
 	}
 
 	var appErr *AppError

@@ -354,6 +354,9 @@ func errorMetadataMap(err error) map[string]any {
 		metadata["model"] = modelErr.Model
 		metadata["status_code"] = modelErr.StatusCode
 		metadata["retryable"] = modelErr.Retryable
+		for key, value := range modelErr.Metadata {
+			metadata[key] = value
+		}
 	}
 	return metadata
 }

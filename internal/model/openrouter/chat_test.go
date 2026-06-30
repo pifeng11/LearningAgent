@@ -191,6 +191,40 @@ func TestProviderMapsInsufficientCredits(t *testing.T) {
 	}
 }
 
+func TestProviderMapsPolicyViolationMetadata(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Body:       io.NopCloser(bytes.NewBufferString(`{"error":{"code":403,"message":"The request is prohibited due to a violation of provider Terms Of Service.","metadata":{"provider_name":"OpenAI","error_type":"policy_violation"}}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	provider, err := NewProvider(Config{
+		APIKey:     "test-key",
+		BaseURL:    "https://example.test/api/v1",
+		HTTPClient: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = provider.Chat(context.Background(), model.Request{Task: model.TaskQA, Prompt: "hello"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var modelErr *model.ModelError
+	if !errors.As(err, &modelErr) {
+		t.Fatalf("expected model error, got %T", err)
+	}
+	if modelErr.Code != "model_policy_violation" {
+		t.Fatalf("expected policy violation, got %+v", modelErr)
+	}
+	if modelErr.Metadata["provider_name"] != "OpenAI" || modelErr.Metadata["provider_error_type"] != "policy_violation" {
+		t.Fatalf("expected provider metadata, got %+v", modelErr.Metadata)
+	}
+}
+
 type roundTripFunc func(r *http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

@@ -245,6 +245,7 @@ func (p *Provider) modelError(apiErr *apiError, modelName string) error {
 		Model:      modelName,
 		Retryable:  isRetryable(apiErr),
 		StatusCode: apiErr.Code,
+		Metadata:   errorMetadata(apiErr),
 		Cause:      fmt.Errorf("openrouter api error: status=%d message=%s", apiErr.Code, apiErr.Message),
 	}
 }
@@ -277,6 +278,8 @@ func mapErrorCode(apiErr *apiError) string {
 				return "model_insufficient_credits"
 			case "context_length_exceeded":
 				return "model_context_too_long"
+			case "policy_violation":
+				return "model_policy_violation"
 			}
 		}
 	}
@@ -286,8 +289,13 @@ func mapErrorCode(apiErr *apiError) string {
 			return "model_context_too_long"
 		}
 		return "model_bad_request"
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return "model_auth_failed"
+	case http.StatusForbidden:
+		if isPolicyViolation(apiErr) {
+			return "model_policy_violation"
+		}
+		return "model_provider_forbidden"
 	case http.StatusPaymentRequired:
 		return "model_insufficient_credits"
 	case http.StatusRequestTimeout:
@@ -299,6 +307,38 @@ func mapErrorCode(apiErr *apiError) string {
 	default:
 		return "model_provider_error"
 	}
+}
+
+func errorMetadata(apiErr *apiError) map[string]any {
+	metadata := map[string]any{
+		"provider_status_code": apiErr.Code,
+		"provider_message":     apiErr.Message,
+	}
+	for key, value := range apiErr.Metadata {
+		metadata[key] = value
+	}
+	if _, ok := metadata["provider_error_type"]; !ok {
+		if value, ok := apiErr.Metadata["error_type"]; ok {
+			metadata["provider_error_type"] = value
+		}
+	}
+	return metadata
+}
+
+func isPolicyViolation(apiErr *apiError) bool {
+	if apiErr == nil {
+		return false
+	}
+	if value, ok := apiErr.Metadata["error_type"].(string); ok {
+		switch value {
+		case "policy_violation", "terms_of_service":
+			return true
+		}
+	}
+	lowerMessage := strings.ToLower(apiErr.Message)
+	return strings.Contains(lowerMessage, "terms of service") ||
+		strings.Contains(lowerMessage, "policy") ||
+		strings.Contains(lowerMessage, "prohibited")
 }
 
 func isRetryable(apiErr *apiError) bool {
