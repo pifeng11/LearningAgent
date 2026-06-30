@@ -182,6 +182,7 @@ function App() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    let streamClosed = false;
 
     try {
       await streamChat(
@@ -192,9 +193,20 @@ function App() {
         },
         {
           signal: controller.signal,
-          onEvent: (streamEvent) => applyStreamEvent(streamEvent, assistantId),
+          onEvent: (streamEvent) => {
+            if (streamEvent.type === "agent.completed" || streamEvent.type === "agent.error") {
+              streamClosed = true;
+            }
+            applyStreamEvent(streamEvent, assistantId);
+          },
         },
       );
+      if (!streamClosed) {
+        const message = "响应中断：服务端连接已结束，但没有返回完成事件";
+        setError(message);
+        setStatus("error");
+        markAssistantError(assistantId, message);
+      }
     } catch (caught) {
       if (controller.signal.aborted) {
         markAssistantDone(assistantId);
@@ -204,13 +216,7 @@ function App() {
       const message = caught instanceof Error ? caught.message : "请求失败";
       setError(message);
       setStatus("error");
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantId
-            ? { ...item, content: item.content || message, status: "error" }
-            : item,
-        ),
-      );
+      markAssistantError(assistantId, message);
     } finally {
       abortRef.current = null;
     }
@@ -263,17 +269,21 @@ function App() {
       const message = formatStreamError(streamEvent.error);
       setError(message);
       setStatus("error");
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantId ? { ...item, content: item.content || message, status: "error" } : item,
-        ),
-      );
+      markAssistantError(assistantId, message);
     }
   }
 
   function markAssistantDone(id: string) {
     setMessages((current) =>
       current.map((item) => (item.id === id ? { ...item, status: "done" } : item)),
+    );
+  }
+
+  function markAssistantError(id: string, message: string) {
+    setMessages((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, content: item.content || message, status: "error" } : item,
+      ),
     );
   }
 

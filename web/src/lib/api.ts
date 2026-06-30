@@ -167,6 +167,11 @@ export async function streamChat(request: ChatRequest, callbacks: StreamCallback
 }
 
 function parseSSEBlock(block: string): ChatStreamEvent | null {
+  const eventName = block
+    .split("\n")
+    .find((line) => line.startsWith("event:"))
+    ?.slice(6)
+    .trim();
   const dataLines = block
     .split("\n")
     .filter((line) => line.startsWith("data:"))
@@ -177,10 +182,11 @@ function parseSSEBlock(block: string): ChatStreamEvent | null {
   }
 
   try {
-    return JSON.parse(dataLines.join("\n")) as ChatStreamEvent;
+    const payload = JSON.parse(dataLines.join("\n")) as ChatStreamEvent;
+    return eventName && !payload.type ? { ...payload, type: eventName } : payload;
   } catch {
     return {
-      type: "agent.error",
+      type: eventName || "agent.error",
       error: "无法解析服务端事件",
     };
   }
