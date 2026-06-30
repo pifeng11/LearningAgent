@@ -175,10 +175,41 @@ make chat
 make dev
 ```
 
+## 接入 OpenRouter
+
+OpenRouter 是聚合模型平台，使用 OpenAI-compatible Chat Completions 接口。复制配置模板并填写 API key：
+
+```bash
+cp .env.example .env
+```
+
+配置示例：
+
+```bash
+MODEL_PROVIDER=openrouter
+MODEL_DEFAULT_MODEL=deepseek/deepseek-chat
+MODEL_TASK_QA=deepseek/deepseek-chat
+MODEL_TASK_LEARNING_PLAN=deepseek/deepseek-r1
+MODEL_TASK_PRACTICE=deepseek/deepseek-chat
+MODEL_TASK_REVIEW=deepseek/deepseek-r1
+MODEL_TASK_MEMORY_EXTRACT=deepseek/deepseek-chat
+OPENROUTER_API_KEY=sk-or-xxx
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=deepseek/deepseek-chat
+OPENROUTER_REASONING_MODEL=deepseek/deepseek-r1
+OPENROUTER_SITE_URL=
+OPENROUTER_APP_TITLE=LearningAgent
+OPENROUTER_METADATA_ENABLED=true
+```
+
+也可以把模型换成 OpenRouter 支持的任意 slug，例如 `openai/gpt-4o-mini`、`anthropic/claude-3.5-sonnet`、`google/gemini-flash-1.5`。
+
+OpenRouter 会返回真实 usage；开启 `OPENROUTER_METADATA_ENABLED=true` 时，请求会携带 `X-OpenRouter-Metadata: enabled`，便于后续在 `model_calls` 中排查路由和费用。
+
 模型选择策略：
 
 - 模型层按 `provider -> capability -> task route` 组织；当前只实现 chat capability。
-- `MODEL_PROVIDER` 控制厂商，例如 `mock`、`deepseek`；后续可扩展 `openai`、`bytedance` 等。
+- `MODEL_PROVIDER` 控制厂商，例如 `mock`、`deepseek`、`openrouter`；后续可扩展 `openai`、`bytedance` 等。
 - `MODEL_DEFAULT_MODEL` 是默认 chat 模型。
 - `MODEL_TASK_*` 可以按任务覆盖模型，例如学习计划和复盘走更强模型。
 - `MODEL_TIMEOUT`、`MODEL_STREAM_TIMEOUT`、`MODEL_MAX_RETRIES` 控制模型调用超时和重试。

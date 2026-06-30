@@ -19,6 +19,7 @@ import (
 	"learning-agent/internal/memory"
 	"learning-agent/internal/model"
 	"learning-agent/internal/model/deepseek"
+	"learning-agent/internal/model/openrouter"
 	"learning-agent/internal/modelcall"
 	"learning-agent/internal/observability"
 	promptbuilder "learning-agent/internal/prompt"
@@ -84,6 +85,16 @@ func newModelProviderFromConfig(cfg Config) (model.Provider, error) {
 			ReasoningEffort: cfg.DeepSeekReasoningEffort,
 			ThinkingEnabled: cfg.DeepSeekThinkingEnabled,
 		})
+	case "openrouter":
+		return openrouter.NewProvider(openrouter.Config{
+			APIKey:          cfg.OpenRouterAPIKey,
+			BaseURL:         cfg.OpenRouterBaseURL,
+			Model:           cfg.OpenRouterModel,
+			ReasoningModel:  cfg.OpenRouterReasoningModel,
+			SiteURL:         cfg.OpenRouterSiteURL,
+			AppTitle:        cfg.OpenRouterAppTitle,
+			MetadataEnabled: cfg.OpenRouterMetadataEnabled,
+		})
 	default:
 		return nil, fmt.Errorf("unsupported MODEL_PROVIDER %q", cfg.ModelProvider)
 	}
@@ -97,9 +108,9 @@ func newModelRouterFromConfig(cfg Config, provider model.Provider, modelCallStor
 	}
 	taskRoutes := map[model.Task]model.Route{}
 	addTaskRoute(taskRoutes, model.TaskQA, cfg.ModelTaskQA)
-	addTaskRoute(taskRoutes, model.TaskLearningPlan, firstNonEmptyString(cfg.ModelTaskLearningPlan, cfg.DeepSeekReasoningModel))
+	addTaskRoute(taskRoutes, model.TaskLearningPlan, firstNonEmptyString(cfg.ModelTaskLearningPlan, providerReasoningModel(cfg)))
 	addTaskRoute(taskRoutes, model.TaskPractice, cfg.ModelTaskPractice)
-	addTaskRoute(taskRoutes, model.TaskReview, firstNonEmptyString(cfg.ModelTaskReview, cfg.DeepSeekReasoningModel))
+	addTaskRoute(taskRoutes, model.TaskReview, firstNonEmptyString(cfg.ModelTaskReview, providerReasoningModel(cfg)))
 	addTaskRoute(taskRoutes, model.TaskMemoryExtract, cfg.ModelTaskMemoryExtract)
 
 	return model.NewRouterWithConfig([]model.Provider{provider}, model.RouterConfig{
@@ -111,6 +122,17 @@ func newModelRouterFromConfig(cfg Config, provider model.Provider, modelCallStor
 		RetryBackoff:   cfg.ModelRetryBackoff,
 		CallRecorder:   modelCallStore,
 	})
+}
+
+func providerReasoningModel(cfg Config) string {
+	switch strings.ToLower(cfg.ModelProvider) {
+	case "openrouter":
+		return cfg.OpenRouterReasoningModel
+	case "deepseek":
+		return cfg.DeepSeekReasoningModel
+	default:
+		return ""
+	}
 }
 
 func addTaskRoute(routes map[model.Task]model.Route, task model.Task, modelName string) {
